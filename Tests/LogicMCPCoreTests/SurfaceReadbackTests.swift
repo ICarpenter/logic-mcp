@@ -43,12 +43,13 @@ final class SurfaceReadbackTests: XCTestCase {
     /// fast. Keeps the session so the test can drive the surface directly. Retains the fake.
     private func makeNav(_ tracks: [FakeLogic.FakeTrack],
                          bannerTimeout: Duration = .milliseconds(150),
+                         bannerLifetime: Duration = .milliseconds(200),
                          singleParameterPage: Bool = false, panStuck: Bool = false)
         async -> (session: MCUSession, nav: MixerNavigator, fake: FakeLogic) {
         let (daemonEnd, logicEnd) = InMemoryWire.pair()
         let session = MCUSession(wire: daemonEnd)
         await session.start()
-        let fake = FakeLogic(wire: logicEnd, tracks: tracks,
+        let fake = FakeLogic(wire: logicEnd, tracks: tracks, bannerLifetime: bannerLifetime,
                              singleParameterPage: singleParameterPage, panStuck: panStuck)
         await fake.start()
         _ = await session.waitFor(timeout: .seconds(2)) {
@@ -170,16 +171,25 @@ final class SurfaceReadbackTests: XCTestCase {
     // MARK: - the display-state hazard: enumeration must never read a banner/param view
 
     func testEnumerateWaitsOutVolumeBannerAndReadsRealNames() async throws {
-        // set_volume on the channel-0 track leaves a "Volume" banner on the name row.
-        // The very next refresh_state must NOT return "Volume" as track 0's name.
-        let (_, registry, fake) = await makeDaemon(Self.tracks(10), bannerLifetime: .milliseconds(600))
-        _ = await registry.call(name: "refresh_state", arguments: ["scope": .string("tracks")])
-        _ = await registry.call(name: "set_volume",
-                                arguments: ["track": .string("T00"), "db": .double(-6.0)])
-        let result = await registry.call(name: "refresh_state", arguments: ["scope": .string("tracks")])
-        XCTAssertNotEqual(result.isError, true)
-        let tracks = try resultJSON(result)["tracks"] as! [[String: Any]]
-        let names = tracks.map { $0["name"] as! String }
+        // Drive a fader move DIRECTLY at the MCU layer (the same `moveFader` call `set_volume`
+        // makes internally) — this is what leaves a transient "Volume" banner on channel 0's
+        // name/pan cells in real Logic. Then call `nav.enumerateTracks()` itself (never the
+        // `refresh_state` tool, which is AX-sourced and never touches the MCU LCD) and prove
+        // `ensureNameRow`/`pollForNames` wait the banner out rather than reading "Volume" as
+        // track 0's name. The banner (300ms) outlives enumeration's initial read but reverts
+        // well inside `bannerTimeout` (800ms), so the only way this test can pass is if the
+        // wait-out loop actually waits.
+        let (session, nav, fake) = await makeNav(Self.tracks(10),
+                                                  bannerTimeout: .milliseconds(800),
+                                                  bannerLifetime: .milliseconds(300))
+        let stream = await session.events()
+        _ = try await session.moveFader(channel: 0, toRaw: 6000, timeout: .seconds(1))
+        let banner = await MCUSession.first(of: stream, timeout: .seconds(1)) {
+            if case .lcd(0, let text) = $0 { return text.hasPrefix("Volume") } else { return false }
+        }
+        XCTAssertNotNil(banner, "fixture never painted the volume banner on channel 0's LCD cell")
+
+        let names = try await nav.enumerateTracks()
         XCTAssertEqual(names, (0..<10).map { String(format: "T%02d", $0) },
                        "the volume banner must not poison enumeration")
         _ = fake
