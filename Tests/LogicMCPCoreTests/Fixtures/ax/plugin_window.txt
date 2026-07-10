@@ -1,0 +1,46 @@
+# Captured 2026-07-10, Logic Pro 12.3, mcp_test, vox strip Channel EQ.
+# Opened by AXPress on the "Channel EQ" group's "open" child button on the vox strip.
+# The plugin window is an AXWindow titled with the TRACK name ("vox").
+# Every parameter is a settable AXSlider addressed by description. Values are raw
+# engineering units in [AXMinValue, AXMaxValue]; AXSetValue NUDGES ±1 toward the target
+# (see ax-findings.md), it does not set absolutely.
+
+AXWindow title="vox"
+  AXButton desc="close"
+  AXButton desc="toolbar"
+    AXButton desc="previous"
+    AXButton desc="next"
+    AXButton desc="Copy"
+    AXButton desc="Paste"
+    AXButton desc="Undo"
+    AXButton desc="Redo"
+    AXSlider desc="Low Cut Frequency" val=0 settable=true
+    AXSlider desc="Low Cut Order" val=1 settable=true
+    AXSlider desc="Low Cut Q" val=36 settable=true
+    AXSlider desc="Low Shelf Frequency" val=200 settable=true
+    AXSlider desc="Low Shelf Gain" val=240 settable=true
+    AXSlider desc="Low Shelf Q" val=40 settable=true
+    AXSlider desc="Peak 1 Frequency" val=250 settable=true
+    AXSlider desc="Peak 1 Gain" val=240 settable=true
+    AXSlider desc="Peak 1 Q" val=33 settable=true
+    AXSlider desc="Peak 2 Frequency" val=375 settable=true
+    AXSlider desc="Peak 2 Gain" val=240 settable=true
+    AXSlider desc="Peak 2 Q" val=20 settable=true
+    AXSlider desc="Peak 3 Frequency" val=604 settable=true
+    AXSlider desc="Peak 3 Gain" val=240 settable=true
+    AXSlider desc="Peak 3 Q" val=26 settable=true
+    AXSlider desc="Peak 4 Frequency" val=725 settable=true
+    AXSlider desc="Peak 4 Gain" val=240 settable=true
+    AXSlider desc="Peak 4 Q" val=13 settable=true
+    AXSlider desc="High Shelf Frequency" val=900 settable=true
+    AXSlider desc="High Shelf Gain" val=240 settable=true
+    AXSlider desc="High Shelf Q" val=40 settable=true
+    AXSlider desc="High Cut Frequency" val=1050 settable=true
+    AXSlider desc="High Cut Order" val=3 settable=true
+    AXSlider desc="High Cut Q" val=36 settable=true
+    AXButton desc="Analyzer" val=POST
+    AXSlider desc="Gain" val=240 settable=true    # master output gain, min=0 max=480
+      AXValueIndicator desc="Gain"
+    AXSlider desc="Gain" val=240 settable=true    # NOTE: "Gain" description appears 3x
+                                                  # (master slider, its value indicator, +1)
+                                                  # → Task 10 must dedupe/index duplicate names

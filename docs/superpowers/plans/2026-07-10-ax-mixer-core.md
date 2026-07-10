@@ -466,7 +466,14 @@ git commit -m "feat(ax): SystemAXProvider and axdump CLI; capture real-Logic fix
 - Produces:
   - `struct AXStripControls: Sendable { var name; var volumeDB: Double?; var volumeSilent: Bool; var pan: Int?; var mute: Bool; var solo: Bool; var output: String? }`
   - `enum AXStrip { static func parseDB(_ title: String) -> (db: Double?, silent: Bool)? }`
-  - `actor AXBridge { init(provider: AXProvider); func stripHandles() throws -> [(name: String, handle: AXHandle)]; func find(_ name: String) throws -> AXHandle; func read(_ h: AXHandle) -> AXStripControls; func control(_ h: AXHandle, description: String) -> AXHandle?; func press(_ h: AXHandle) throws; func setValue(_ v: Double, of h: AXHandle) throws; func value(of h: AXHandle) -> Double?; func isSettable(_ h: AXHandle) -> Bool }`
+  - `actor AXBridge { init(provider: AXProvider); func stripHandles() throws -> [(name: String, handle: AXHandle)]; func find(_ name: String) throws -> AXHandle; func read(_ h: AXHandle) -> AXStripControls; func control(_ h: AXHandle, description: String) -> AXHandle?; func descendant(of: AXHandle, role: String?, description: String?) -> AXHandle?; func press(_ h: AXHandle) throws; func setValue(_ v: Double, of h: AXHandle) throws; func value(of h: AXHandle) -> Double?; func isSettable(_ h: AXHandle) -> Bool; func minMax(of h: AXHandle) -> (Double?, Double?); func nudgeToRaw(_ h: AXHandle, target: Double, maxSteps: Int) throws -> Double; func titleOfLevel(_ strip: AXHandle) -> String? }`
+
+**CRITICAL runtime fact (from `.superpowers/sdd/ax-findings.md`, verified on real Logic):**
+`AXUIElementSetAttributeValue` on Logic's sliders is a **±1 nudge toward the target, NOT an
+absolute set.** Every value-setting tool must therefore CONVERGE by repeated nudging, reading
+an oracle each step. `nudgeToRaw` is that loop for raw-valued targets (pan, plugin params);
+`set_volume` uses a dB-oracle variant. Read `ax-findings.md` before Tasks 3/6/7/10 — it
+supersedes any absolute-set code shown in the original plan.
 
 - [ ] **Step 1: Write the dB-parse test** (`Tests/LogicMCPCoreTests/AXStripTests.swift`)
 
@@ -699,8 +706,89 @@ public actor AXBridge {
     public func titleOfLevel(_ strip: AXHandle) -> String? {
         control(strip, description: "volume fader level").flatMap { p.string(.title, of: $0) }
     }
+    public func minMax(of h: AXHandle) -> (Double?, Double?) { p.minMax(of: h) }
+
+    /// Converge a slider on `target` by repeated nudging. AXSetValue on Logic sliders moves
+    /// ONE unit toward the target per call (see ax-findings.md), so this loops until the
+    /// read-back reaches `target` or stops progressing. Returns the achieved raw value.
+    public func nudgeToRaw(_ h: AXHandle, target: Double, maxSteps: Int) throws -> Double {
+        var last = p.number(of: h) ?? 0
+        if last == target { return last }
+        for _ in 0..<maxSteps {
+            try p.setNumber(target, of: h)          // moves 1 toward target
+            let now = p.number(of: h) ?? last
+            if now == target || now == last { return now }   // reached, or stuck at a boundary
+            last = now
+        }
+        return last
+    }
 }
 ```
+
+- [ ] **Step 7b: Extend `AXProvider` with `minMax`, and make the fake model Logic's ±1 nudge**
+
+The convergence primitive needs each slider's range, and the fake must reproduce the nudge
+semantics discovered in the fixtures or the convergence tests would pass against unrealistic
+behavior. Make these three edits:
+
+1. `Sources/LogicMCPCore/AX/AXProvider.swift` — add to the `AXProvider` protocol:
+```swift
+    func minMax(of h: AXHandle) -> (Double?, Double?)
+```
+
+2. `Sources/LogicMCPCore/AX/SystemAXProvider.swift` — implement it (Task 2's file):
+```swift
+    public func minMax(of h: AXHandle) -> (Double?, Double?) {
+        func d(_ key: String) -> Double? {
+            var v: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(raw(h), key as CFString, &v) == .success,
+                  let n = v as? NSNumber else { return nil }
+            return n.doubleValue
+        }
+        return (d(kAXMinValueAttribute as String), d(kAXMaxValueAttribute as String))
+    }
+```
+
+3. `Tests/LogicMCPCoreTests/FakeAXTree.swift` — add `minValue`/`maxValue` to `FakeAXNode`
+(`init` params defaulting to `nil`), an optional `nudgeMode` to `FakeAXProvider`, and implement
+`minMax` + the nudge:
+```swift
+    // FakeAXNode: add stored props
+    let minValue: Double?
+    let maxValue: Double?
+    // and accept them in init(...) with defaults nil
+
+    // FakeAXProvider: add
+    /// When true, setNumber moves ±1 toward the target (models real Logic sliders); when
+    /// false it sets absolutely. Default false so Task 1's tests are unchanged.
+    var nudgeMode = false
+    func minMax(of h: AXHandle) -> (Double?, Double?) {
+        guard let n = node(h) else { return (nil, nil) }
+        return (n.minValue, n.maxValue)
+    }
+    // and REPLACE the body of setNumber(_:of:) with:
+    func setNumber(_ v: Double, of h: AXHandle) throws {
+        guard let n = node(h), n.settable else { throw AXUnavailable() }
+        let cur = n.numberValue ?? 0
+        if nudgeMode {
+            if v > cur { n.numberValue = cur + 1 } else if v < cur { n.numberValue = cur - 1 }
+        } else {
+            n.numberValue = v
+        }
+        onSetNumber?(n, n.numberValue ?? cur)   // hook sees the RESULTING value (Task 6 titles)
+    }
+```
+The `onSetNumber` hook is added in Task 6; if you are doing Task 3 first, add the stored
+property `var onSetNumber: ((FakeAXNode, Double) -> Void)?` now and this body compiles.
+
+Task 1's `testSetNumberUpdatesSettableSlider` asserts absolute set (`setNumber(200) == 200`)
+with `nudgeMode` default false — it stays green. Convergence tests (Tasks 6/7/10) set
+`provider.nudgeMode = true`.
+
+- [ ] **Step 7c: Run the extended fake/bridge tests**
+
+Run: `pkill -f xctest 2>/dev/null; perl -e 'alarm 600; exec @ARGV' swift test --filter AXBridgeTests`
+Expected: PASS (existing bridge tests unaffected — nudgeMode defaults off).
 
 - [ ] **Step 8: Wire the bridge into `Daemon`** (`Sources/LogicMCPCore/Daemon.swift`)
 
@@ -966,12 +1054,14 @@ final class AXMixToolTests: XCTestCase {
             FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute", stringValue: mute),
             FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "solo", stringValue: "off"),
             FakeAXNode(role: "AXStaticText", description: "volume fader level", title: "volume fader level, 0.0 dB"),
-            FakeAXNode(role: "AXSlider", description: "pan", value: 0, settable: true),
-            FakeAXNode(role: "AXSlider", description: "volume fader", value: 173, settable: true),
+            FakeAXNode(role: "AXSlider", description: "pan", value: 0, settable: true, minValue: -64, maxValue: 63),
+            FakeAXNode(role: "AXSlider", description: "volume fader", value: 173, settable: true, minValue: 0, maxValue: 233),
         ])
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
-        return FakeAXProvider(root: FakeAXNode(role: "AXApplication",
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication",
                               children: [FakeAXNode(role: "AXWindow", children: [area])]))
+        p.nudgeMode = true   // model real Logic: AXSetValue nudges ±1 toward target
+        return p
     }
 
     func testMuteOnPressesAndVerifies() async throws {
@@ -1086,11 +1176,14 @@ stopping when it overshoots or stops improving. Return the dB Logic actually sho
 ```swift
     /// A fake volume slider whose fader-level title tracks a monotonic unit→dB curve, so
     /// binary search has something real to converge on.
+    // NUDGE-MODE fake: models real Logic (AXSetValue moves ±1 toward target). The dB title is
+    // recomputed from the fader unit after every nudge, so the convergence loop has a moving
+    // oracle exactly like real Logic. dB = (unit - 173) * 0.1 (173 ≈ 0 dB; matches fixtures).
     func stripWithVolumeCurve() -> FakeAXProvider {
         let level = FakeAXNode(role: "AXStaticText", description: "volume fader level",
                                title: "volume fader level, 0.0 dB")
-        let vol = FakeAXNode(role: "AXSlider", description: "volume fader", value: 173, settable: true)
-        // Model: dB = (unit - 173) * 0.1, clamped; title recomputed on each set via the provider hook.
+        let vol = FakeAXNode(role: "AXSlider", description: "volume fader", value: 173,
+                             settable: true, minValue: 0, maxValue: 233)
         let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
             FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute", stringValue: "off"),
             vol, level,
@@ -1098,9 +1191,10 @@ stopping when it overshoots or stops improving. Return the dB Logic actually sho
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
         let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication",
                                children: [FakeAXNode(role: "AXWindow", children: [area])]))
-        p.onSetNumber = { node, v in
+        p.nudgeMode = true   // <-- model Logic's ±1-per-set behavior
+        p.onSetNumber = { node, resulting in
             guard node === vol else { return }
-            let db = (v - 173) * 0.1
+            let db = (resulting - 173) * 0.1
             level.title = "volume fader level, \(String(format: "%+.1f", db)) dB"
         }
         return p
@@ -1124,15 +1218,9 @@ stopping when it overshoots or stops improving. Return the dB Logic actually sho
     }
 ```
 
-Add the `onSetNumber` hook to `FakeAXProvider` (in `FakeAXTree.swift`):
-```swift
-    var onSetNumber: ((FakeAXNode, Double) -> Void)?
-```
-and call it inside `setNumber` after assignment:
-```swift
-        n.numberValue = v
-        onSetNumber?(n, v)
-```
+The `onSetNumber` hook and the nudge-aware `setNumber` were added to `FakeAXProvider` in Task 3
+(Step 7b). If for some reason they are absent, add `var onSetNumber: ((FakeAXNode, Double) -> Void)?`
+and the nudge `setNumber` body from Task 3 Step 7b now. Do not re-add them if present.
 
 - [ ] **Step 2: Run — fails**
 
@@ -1150,10 +1238,10 @@ Keep the existing argument parsing (db XOR delta) verbatim. Replace everything f
             throw ToolFailure(error: "no volume fader", layer: "ax",
                               expected: "a volume slider on '\(trackName)'", observed: "none")
         }
-        func currentDB() -> Double? {
-            guard let title = daemon.ax.titleOfLevel(strip),   // actor-isolated; see note
-                  let p = AXStrip.parseDB(title) else { return nil }
-            return p.db
+        func currentDB() async -> Double? {
+            guard let title = await daemon.ax.titleOfLevel(strip),
+                  let parsed = AXStrip.parseDB(title) else { return nil }
+            return parsed.db
         }
         let startDB = await currentDB()
         let targetDB: Double
@@ -1185,43 +1273,30 @@ Keep the existing argument parsing (db XOR delta) verbatim. Replace everything f
 }
 
 /// Converge the fader on `targetDB` using the dB title as the oracle. No curve. Returns the
-/// dB Logic actually renders (nil ⇒ silent). Bisects the settable unit value; falls back to
-/// Increment/Decrement stepping if the slider is not settable.
+/// dB Logic actually renders (nil ⇒ silent). Because AXSetValue NUDGES ±1 toward the passed
+/// value (ax-findings.md), we drive the slider toward its max to go up and toward its min to
+/// go down, one nudge per loop, re-reading the dB title each time until within tolerance or
+/// stuck. This is curve-free and correct against real Logic's relative-set behavior.
 func axConvergeVolume(_ daemon: Daemon, strip: AXHandle, slider: AXHandle, targetDB: Double) async throws -> Double? {
-    func db() -> Double? { daemon.ax.titleOfLevel(strip).flatMap { AXStrip.parseDB($0)?.db } }
-    if await daemon.ax.isSettable(slider), let unit0 = await daemon.ax.value(of: slider) {
-        // Bracket by probing the ends, then bisect on unit → dB (monotonic increasing).
-        var lo = 0.0, hi = max(unit0 * 2, 16383)
-        for _ in 0..<24 {
-            let mid = (lo + hi) / 2
-            try await daemon.ax.setValue(mid, of: slider)
-            guard let cur = db() else { break }         // hit silence floor
-            if abs(cur - targetDB) <= 0.1 { return cur }
-            if cur < targetDB { lo = mid } else { hi = mid }
-        }
-        return db()
-    } else {
-        // Step toward target; stop on overshoot or no-progress.
-        var last = db() ?? -.infinity
-        for _ in 0..<200 {
-            guard let cur = db() else { break }
-            if abs(cur - targetDB) <= 0.1 { return cur }
-            try await daemon.ax.step(cur < targetDB, slider)
-            let now = db() ?? cur
-            if (cur < targetDB) == (now < cur) { return now }   // overshot
-            if now == last { return now }                        // stuck
-            last = now
-        }
-        return db()
+    func db() async -> Double? {
+        guard let t = await daemon.ax.titleOfLevel(strip) else { return nil }
+        return AXStrip.parseDB(t)?.db
     }
+    let (loOpt, hiOpt) = await daemon.ax.minMax(of: slider)
+    let lo = loOpt ?? 0, hi = hiOpt ?? 233
+    var last = await db()
+    for _ in 0..<400 {
+        guard let cur = await db() else { break }              // silent/unreadable
+        if abs(cur - targetDB) <= 0.1 { return cur }
+        try await daemon.ax.setValue(cur < targetDB ? hi : lo, of: slider)   // one nudge toward target
+        let now = await db()
+        if now == nil { return cur }
+        if now == last { return now }                          // stuck (boundary/target)
+        last = now
+    }
+    return await db()
 }
 ```
-
-**Note on `daemon.ax.titleOfLevel` inside a sync closure:** `AXBridge` is an actor, so its
-methods are `await`-only. Rewrite `currentDB()`/`db()` as `await` calls (make them
-`async` local functions) — the closure form above is illustrative; the implementer converts
-to `await daemon.ax.titleOfLevel(strip)`. Add `public func titleOfLevel` already exists on the
-bridge (Task 3, Step 7).
 
 - [ ] **Step 4: Run — passes**
 
@@ -1277,11 +1352,9 @@ Expected: FAIL (still MCU pan).
             throw ToolFailure(error: "pan not settable via AX", layer: "ax",
                               expected: "a settable pan slider", observed: "read-only")
         }
-        try await daemon.ax.setValue(Double(position), of: pan)
-        guard let observedRaw = await daemon.ax.value(of: pan) else {
-            throw ToolFailure(error: "pan not confirmed", layer: "ax",
-                              expected: "a pan value on '\(trackName)'", observed: "unreadable")
-        }
+        // AX pan range is −64…63 (matches the tool's `position`); AXSetValue nudges ±1 per call
+        // (ax-findings.md), so converge with nudgeToRaw. 128 steps covers the full range.
+        let observedRaw = try await daemon.ax.nudgeToRaw(pan, target: Double(position), maxSteps: 128)
         let observed = Int(observedRaw.rounded())
         let name = await daemon.ax.read(strip).name
         let priorPan = await daemon.model.snapshot.tracks.first { $0.name == name }?.pan
@@ -1515,17 +1588,29 @@ import MCP
 final class AXPluginToolTests: XCTestCase {
     /// Mixer with a 'vox' strip whose EQ, when "opened", exposes a plugin window with two params.
     func makeProvider() -> FakeAXProvider {
-        let gain = FakeAXNode(role: "AXSlider", description: "Gain", title: "0.0 dB", value: 0.5, settable: true)
-        let freq = FakeAXNode(role: "AXSlider", description: "Frequency", title: "1000 Hz", value: 0.3, settable: true)
-        let pluginWindow = FakeAXNode(role: "AXWindow", title: "vox: Channel EQ", children: [gain, freq])
-        let eq = FakeAXNode(role: "AXButton", description: "EQ", stringValue: "on")
+        // Plugin window (already open), titled by TRACK name, with a close button + settable
+        // sliders carrying real ranges — mirrors Fixtures/ax/plugin_window.txt.
+        let gain = FakeAXNode(role: "AXSlider", description: "Gain", title: "0.0 dB",
+                              value: 240, settable: true, minValue: 0, maxValue: 480)
+        let freq = FakeAXNode(role: "AXSlider", description: "Peak 1 Frequency", title: "1000 Hz",
+                              value: 250, settable: true, minValue: 0, maxValue: 1050)
+        let pluginWindow = FakeAXNode(role: "AXWindow", title: "vox", children: [
+            FakeAXNode(role: "AXButton", description: "close"), gain, freq,
+        ])
+        // Strip carries a plugin GROUP "Channel EQ" with an "open" child (slot 0).
+        let eqGroup = FakeAXNode(role: "AXGroup", description: "Channel EQ", children: [
+            FakeAXNode(role: "AXCheckBox", description: "bypass", stringValue: "0"),
+            FakeAXNode(role: "AXButton", description: "open"),
+        ])
         let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
-            FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute", stringValue: "off"), eq,
+            FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute", stringValue: "off"),
+            eqGroup,
         ])
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
-        // Both the mixer window and the (already open) plugin window are top-level.
-        return FakeAXProvider(root: FakeAXNode(role: "AXApplication",
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication",
             children: [FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer", children: [area]), pluginWindow]))
+        p.nudgeMode = true
+        return p
     }
 
     func testGetPluginParamsListsNames() async throws {
@@ -1556,20 +1641,43 @@ Expected: FAIL.
 
 ```swift
     // `descendant(of:role:description:)` was added to AXBridge in Task 3 — reuse it here.
-    public func pluginWindow(titled fragment: String) -> AXHandle? {
-        p.windows().first { (p.string(.title, of: $0) ?? "").localizedCaseInsensitiveContains(fragment) }
+
+    /// Plugin slots on a strip are AXGroups (e.g. "Channel EQ", "RetroSyn") each with an
+    /// "open" child button (see Fixtures/ax/mixer_strip.txt). Returns them in tree order so
+    /// `slot` indexes them; the dedicated Channel EQ group is included like any other.
+    public func pluginGroups(_ strip: AXHandle) -> [(name: String, group: AXHandle)] {
+        p.children(of: strip).compactMap { g in
+            guard p.string(.role, of: g) == "AXGroup",
+                  let name = p.string(.description, of: g), !name.isEmpty,
+                  p.children(of: g).contains(where: { p.string(.description, of: $0) == "open" })
+            else { return nil }
+            return (name, g)
+        }
     }
-    public func paramControls(in window: AXHandle) -> [AXHandle] {
-        var out: [AXHandle] = []
+    /// A plugin window is an AXWindow whose title is the TRACK name and which contains
+    /// parameter sliders (distinguishes it from the mixer window, also track-titled sometimes).
+    public func pluginWindow(track: String) -> AXHandle? {
+        p.windows().first {
+            (p.string(.title, of: $0) ?? "") == track
+                && descendant(of: $0, role: "AXSlider", description: nil) != nil
+                && descendant(of: $0, role: nil, description: "close") != nil
+        }
+    }
+    /// The plugin's parameter controls: settable AXSliders only, DEDUPED by description
+    /// (Logic exposes duplicates like "Gain" ×3 — keep the first settable slider per name).
+    public func paramControls(in window: AXHandle) -> [(name: String, handle: AXHandle)] {
+        var out: [(String, AXHandle)] = []
+        var seen = Set<String>()
         func rec(_ x: AXHandle, _ d: Int) {
-            if d > 10 { return }
-            let role = p.string(.role, of: x)
-            if (role == "AXSlider" || role == "AXValueIndicator"),
-               let name = p.string(.description, of: x), !name.isEmpty { out.append(x) }
+            if d > 12 { return }
+            if p.string(.role, of: x) == "AXSlider", p.isSettable(x),
+               let name = p.string(.description, of: x), !name.isEmpty, !seen.contains(name) {
+                seen.insert(name); out.append((name, x))
+            }
             for c in p.children(of: x) { rec(c, d + 1) }
         }
         rec(window, 0)
-        return out
+        return out.map { (name: $0.0, handle: $0.1) }
     }
 ```
 
@@ -1587,22 +1695,28 @@ func axEnterPlugin(_ daemon: Daemon, trackName: String, slot: Int) async throws
     -> (name: String, window: AXHandle, params: [(name: String, handle: AXHandle)]) {
     let strip = try await daemon.ax.find(trackName)
     let name = await daemon.ax.read(strip).name
-    // Open the plugin: slot 0 is the Channel EQ button on stock strips; other slots use the
-    // "audio plug-in" insert. Adjust to Fixtures/ax/mixer_strip.txt.
-    let opener = await daemon.ax.control(strip, description: slot == 0 ? "EQ" : "audio plug-in")
-    if let opener { try? await daemon.ax.press(opener) }   // idempotent-ish: opens/focuses window
-    guard let window = await daemon.ax.pluginWindow(titled: name) else {
-        throw ToolFailure(error: "no plugin window for '\(name)' slot \(slot)", layer: "ax",
-                          expected: "an open plugin window", observed: "none — is a plugin in that slot?")
+    let groups = await daemon.ax.pluginGroups(strip)
+    guard slot >= 0, slot < groups.count else {
+        throw ToolFailure(error: "no plugin in slot \(slot) on '\(name)'", layer: "ax",
+                          expected: "one of \(groups.count) plugin slots: \(groups.map(\.name).joined(separator: ", "))",
+                          observed: "slot \(slot) out of range")
     }
-    let controls = await daemon.ax.paramControls(in: window)
-    guard !controls.isEmpty else {
+    // Open ONLY if the plugin window isn't already up — the "open" button toggles, so pressing
+    // it on an already-open window would CLOSE it.
+    if await daemon.ax.pluginWindow(track: name) == nil,
+       let openBtn = await daemon.ax.descendant(of: groups[slot].group, role: "AXButton", description: "open") {
+        try? await daemon.ax.press(openBtn)
+    }
+    guard let window = await daemon.ax.pluginWindow(track: name) else {
+        throw ToolFailure(error: "could not open plugin '\(groups[slot].name)' on '\(name)'", layer: "ax",
+                          expected: "an open plugin window titled '\(name)'", observed: "no plugin window")
+    }
+    let params = await daemon.ax.paramControls(in: window)
+    guard !params.isEmpty else {
         throw ToolFailure(error: "plugin parameters not accessible via AX", layer: "ax",
-                          expected: "addressable parameter controls", observed: "opaque plugin view")
+                          expected: "addressable parameter sliders", observed: "opaque plugin view")
     }
-    var params: [(String, AXHandle)] = []
-    for c in controls { if let n = await daemon.ax.stringValue(.description, of: c) { params.append((n, c)) } }
-    return (name, window, params.map { (name: $0.0, handle: $0.1) })
+    return (name, window, params)
 }
 ```
 
@@ -1632,7 +1746,16 @@ func axEnterPlugin(_ daemon: Daemon, trackName: String, slot: Int) async throws
             throw ToolFailure(error: "parameter '\(target.name)' not settable via AX", layer: "ax",
                               expected: "a settable control", observed: "read-only")
         }
-        try await daemon.ax.setValue(value, of: target.handle)   // AX normalized 0…1 matches our contract
+        // Param values are raw engineering units in [min,max]; the contract's `value` is 0…1.
+        // Map, then converge by nudging (AXSetValue moves ±1 per call — ax-findings.md).
+        let (loOpt, hiOpt) = await daemon.ax.minMax(of: target.handle)
+        guard let lo = loOpt, let hi = hiOpt, hi > lo else {
+            throw ToolFailure(error: "parameter '\(target.name)' has no readable range", layer: "ax",
+                              expected: "AXMinValue/AXMaxValue on the slider", observed: "missing range")
+        }
+        let rawTarget = lo + value * (hi - lo)
+        let steps = Int((hi - lo).rounded(.up)) + 2
+        _ = try await daemon.ax.nudgeToRaw(target.handle, target: rawTarget, maxSteps: steps)
         let display = await daemon.ax.stringValue(.title, of: target.handle)
             ?? await daemon.ax.value(of: target.handle).map { String($0) } ?? ""
         await daemon.journal.record(MixMutation(

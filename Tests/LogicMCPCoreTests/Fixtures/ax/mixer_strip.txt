@@ -1,0 +1,30 @@
+AXLayoutItem description="vox" settable=false
+  AXTextField description="name" value="vox" settable=false
+  AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+  AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+  AXSlider description="volume fader" value="173" settable=true
+    AXValueIndicator description="fader knob" settable=false
+  AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+  AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+  AXSlider description="pan" value="0" settable=true
+    AXStaticText description="knob readout" settable=false
+  AXGroup description="Read, automation enabled" settable=false
+    AXCheckBox description="automation" value="1" settable=false
+    AXButton description="list" settable=false
+  AXPopUpButton description="group" title="group" settable=false
+  AXButton description="Bus 9" settable=false
+  AXButton description="send button" settable=false
+  AXButton description="audio plug-in" settable=false
+  AXButton description="insert bar" settable=false
+  AXGroup description="Channel EQ" settable=false
+    AXCheckBox description="bypass" value="0" settable=false
+    AXButton description="open" settable=false
+    AXButton description="list" settable=false
+  AXGroup description="RetroSyn" settable=false
+    AXCheckBox description="bypass" value="0" settable=false
+    AXButton description="open" settable=false
+    AXButton description="list" settable=false
+  AXButton description="MIDI plug-in" settable=false
+  AXButton description="EQ" value="on" settable=false
+  AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+  AXButton description="setting" settable=false
