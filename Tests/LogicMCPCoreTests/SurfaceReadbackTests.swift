@@ -10,6 +10,16 @@ final class SurfaceReadbackTests: XCTestCase {
         (0..<n).map { FakeLogic.FakeTrack(name: String(format: "T%02d", $0)) }
     }
 
+    /// A minimal AX mixer mirroring `tracks`' names — these tests exercise MCU-sourced tools
+    /// (`set_volume`/`set_pan`, which go through `MixerNavigator`, never AX), but `refresh_state`
+    /// is now AX-only, so a call to it needs a non-empty mixer to read.
+    private static func axProvider(for tracks: [FakeLogic.FakeTrack]) -> FakeAXProvider {
+        let strips = tracks.map { FakeAXNode(role: "AXLayoutItem", description: $0.name) }
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: strips)
+        let window = FakeAXNode(role: "AXWindow", children: [area])
+        return FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
+    }
+
     /// Daemon + registry over a fake whose LCD-display behaviour is tunable. Retains the fake.
     private func makeDaemon(_ tracks: [FakeLogic.FakeTrack],
                             bannerLifetime: Duration = .milliseconds(200),
@@ -19,7 +29,7 @@ final class SurfaceReadbackTests: XCTestCase {
         let (daemonEnd, logicEnd) = InMemoryWire.pair()
         let fake = FakeLogic(wire: logicEnd, tracks: tracks,
                              bannerLifetime: bannerLifetime, ringEchoes: ringEchoes, panSnap: panSnap)
-        let daemon = await Daemon(wire: daemonEnd, axProvider: FakeAXProvider(root: FakeAXNode(role: "AXApplication")))
+        let daemon = await Daemon(wire: daemonEnd, axProvider: Self.axProvider(for: tracks))
         await fake.start()
         let registry = ToolRegistry()
         await daemon.registerAllTools(in: registry)

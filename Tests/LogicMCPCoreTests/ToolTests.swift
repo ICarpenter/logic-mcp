@@ -25,10 +25,21 @@ final class ToolTests: XCTestCase {
         XCTAssertTrue(json.contains("\"layer\":\"daemon\""))
     }
 
+    /// The three re-homed query tools (`refresh_state`/`get_project_overview`/`get_track`)
+    /// now read via `AXMixer`, never the MCU wire — so the fake AX mixer must mirror
+    /// `FakeLogic.standardSession()`'s names, in the same order, or those tools see an
+    /// empty/wrong shadow model even though `FakeLogic` (the MCU side) is fully populated.
+    static func axProviderForStandardSession() -> FakeAXProvider {
+        let strips = FakeLogic.standardSession().map { FakeAXNode(role: "AXLayoutItem", description: $0.name) }
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: strips)
+        let window = FakeAXNode(role: "AXWindow", children: [area])
+        return FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
+    }
+
     func makeDaemonWithFakeLogic() async -> (daemon: Daemon, registry: ToolRegistry, fake: FakeLogic) {
         let (daemonEnd, logicEnd) = InMemoryWire.pair()
         let fake = FakeLogic(wire: logicEnd, tracks: FakeLogic.standardSession())
-        let daemon = await Daemon(wire: daemonEnd, axProvider: FakeAXProvider(root: FakeAXNode(role: "AXApplication")))
+        let daemon = await Daemon(wire: daemonEnd, axProvider: Self.axProviderForStandardSession())
         await fake.start()
         let registry = ToolRegistry()
         await daemon.registerAllTools(in: registry)

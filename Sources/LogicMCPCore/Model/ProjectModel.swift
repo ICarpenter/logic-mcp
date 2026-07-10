@@ -9,6 +9,7 @@ public struct TrackState: Codable, Sendable {
     public var pan: Int?
     public var mute = false
     public var solo = false
+    public var output: String?
 }
 
 public struct TransportState: Codable, Sendable {
@@ -27,6 +28,15 @@ public actor ProjectModel {
 
     public func replaceTracks(_ names: [String]) {
         tracks = names.enumerated().map { TrackState(index: $0.offset, name: $0.element) }
+        staleAt = nil
+    }
+
+    public func replaceTracks(_ controls: [AXStripControls]) {
+        tracks = controls.enumerated().map { i, c in
+            TrackState(index: i, name: c.name, volumeRaw: nil, volumeDB: c.volumeDB,
+                       volumeIsSilent: c.volumeSilent,
+                       pan: c.pan.map { $0 + 64 }, mute: c.mute, solo: c.solo, output: c.output)
+        }
         staleAt = nil
     }
 

@@ -3,6 +3,7 @@ public final class Daemon: Sendable {
     public let model: ProjectModel
     public let navigator: MixerNavigator
     public let ax: AXBridge
+    public let axMixer: AXMixer
     public let journal = UndoJournal()
 
     public init(wire: MCUWire, axProvider: AXProvider) async {
@@ -10,6 +11,7 @@ public final class Daemon: Sendable {
         model = ProjectModel()
         navigator = MixerNavigator(session: session, model: model)
         ax = AXBridge(provider: axProvider)
+        axMixer = AXMixer(bridge: ax, model: model)
         await session.start()
     }
 

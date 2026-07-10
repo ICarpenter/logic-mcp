@@ -10,6 +10,7 @@ func trackValue(_ t: TrackState) -> Value {
         "pan": t.pan.map { Value.int($0 - 64) } ?? .null,
         "mute": .bool(t.mute),
         "solo": .bool(t.solo),
+        "output": t.output.map { Value.string($0) } ?? .null,
     ])
 }
 
@@ -77,7 +78,7 @@ public struct GetProjectOverviewTool: LogicTool {
     let daemon: Daemon
     public func invoke(_ args: [String: Value]) async throws -> Value {
         if await daemon.model.snapshot.staleAt != nil {
-            _ = try? await daemon.navigator.enumerateTracks()   // best effort; still returns whatever we have
+            _ = try? await daemon.axMixer.syncTracks()   // best effort; still returns whatever we have
         }
         return await overviewValue(daemon.model.snapshot)
     }
@@ -94,20 +95,21 @@ public struct GetTrackTool: LogicTool {
     let daemon: Daemon
     public func invoke(_ args: [String: Value]) async throws -> Value {
         let name = try requireString(args, "name", tool: name)
-        return trackValue(try await daemon.navigator.resolve(name))
+        if await daemon.model.snapshot.staleAt != nil { _ = try? await daemon.axMixer.syncTracks() }
+        return trackValue(try await daemon.model.track(named: name))
     }
 }
 
 public struct RefreshStateTool: LogicTool {
     public let name = "refresh_state"
-    public let description = "Re-scan Logic over the MCU wire and rebuild the shadow model. scope: 'tracks' (default) re-enumerates the mixer."
+    public let description = "Re-scan Logic via Accessibility and rebuild the shadow model. scope: 'tracks' (default) re-enumerates the mixer."
     public let inputSchema: Value = .object([
         "type": .string("object"),
         "properties": .object(["scope": .object(["type": .string("string")])]),
     ])
     let daemon: Daemon
     public func invoke(_ args: [String: Value]) async throws -> Value {
-        _ = try await daemon.navigator.enumerateTracks()
+        _ = try await daemon.axMixer.syncTracks()
         return await overviewValue(daemon.model.snapshot)
     }
 }
