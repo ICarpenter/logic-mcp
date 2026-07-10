@@ -2,16 +2,17 @@ import XCTest
 import MCP
 @testable import LogicMCPCore
 
-/// End-to-end tests that `set_volume`/`set_pan` return Logic's OWN printed numbers (not the
-/// requested value round-tripped through a curve), and that a parameter/banner view left on
-/// the LCD can never be read as track names by `enumerateTracks`.
+/// End-to-end tests that `set_pan` returns Logic's OWN printed number (not the requested value),
+/// and that a parameter/banner view left on the LCD can never be read as track names by
+/// `enumerateTracks`. (`set_volume` was MCU/banner-sourced when this file was written; it is
+/// AX-based now — see `AXMixToolTests` for its convergence coverage.)
 final class SurfaceReadbackTests: XCTestCase {
     static func tracks(_ n: Int) -> [FakeLogic.FakeTrack] {
         (0..<n).map { FakeLogic.FakeTrack(name: String(format: "T%02d", $0)) }
     }
 
-    /// A minimal AX mixer mirroring `tracks`' names — these tests exercise MCU-sourced tools
-    /// (`set_volume`/`set_pan`, which go through `MixerNavigator`, never AX), but `refresh_state`
+    /// A minimal AX mixer mirroring `tracks`' names — these tests exercise `set_pan`, an
+    /// MCU-sourced tool (goes through `MixerNavigator`, never AX), but `refresh_state`
     /// is now AX-only, so a call to it needs a non-empty mixer to read.
     private static func axProvider(for tracks: [FakeLogic.FakeTrack]) -> FakeAXProvider {
         let strips = tracks.map { FakeAXNode(role: "AXLayoutItem", description: $0.name) }
@@ -64,37 +65,6 @@ final class SurfaceReadbackTests: XCTestCase {
             throw ToolFailure(error: "no text", layer: "daemon")
         }
         return try JSONSerialization.jsonObject(with: Data(json.utf8)) as! [String: Any]
-    }
-
-    // MARK: - set_volume returns Logic's LCD dB
-
-    func testSetVolumeReturnsLogicDBWithSourceLogic() async throws {
-        // Banner lives well past set_volume's 150ms read, so Logic's printed dB is used.
-        let (_, registry, fake) = await makeDaemon(Self.tracks(4), bannerLifetime: .milliseconds(900))
-        _ = await registry.call(name: "refresh_state", arguments: ["scope": .string("tracks")])
-        let result = await registry.call(name: "set_volume",
-                                         arguments: ["track": .string("T00"), "db": .double(-6.0)])
-        XCTAssertNotEqual(result.isError, true)
-        let json = try resultJSON(result)
-        XCTAssertEqual(json["source"] as? String, "logic",
-                       "with a live banner, the dB must come from Logic's LCD")
-        XCTAssertEqual(json["volumeDB"] as! Double, -6.0, accuracy: 0.2)
-        _ = fake
-    }
-
-    func testSetVolumeFallsBackToCurveWhenBannerAbsent() async throws {
-        // bannerLifetime .zero => the fake never paints a banner, so the tool must fall back
-        // to the calibrated curve and say so.
-        let (_, registry, fake) = await makeDaemon(Self.tracks(4), bannerLifetime: .zero)
-        _ = await registry.call(name: "refresh_state", arguments: ["scope": .string("tracks")])
-        let result = await registry.call(name: "set_volume",
-                                         arguments: ["track": .string("T00"), "db": .double(-6.0)])
-        XCTAssertNotEqual(result.isError, true)
-        let json = try resultJSON(result)
-        XCTAssertEqual(json["source"] as? String, "curve",
-                       "with no banner, the dB must be interpolated from the curve")
-        XCTAssertEqual(json["volumeDB"] as! Double, -6.0, accuracy: 0.2)
-        _ = fake
     }
 
     // MARK: - set_pan returns the OBSERVED pan, not the requested one

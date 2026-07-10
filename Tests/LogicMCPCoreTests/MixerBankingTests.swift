@@ -270,16 +270,23 @@ final class MixerBankingTests: XCTestCase {
 
     // MARK: - fader targeting regression (item 5)
 
-    func testSetVolumeTargetsCorrectTrackInTerminalWindow() async throws {
+    /// Originally exercised via set_volume, which re-homed onto AX in a later task — AX
+    /// addresses strips by name and never banks the MCU surface at all, so the "wrong physical
+    /// channel" failure mode this test guards against can no longer occur through set_volume.
+    /// set_pan still runs the MCU `resolveAndBank` path, so it stands in as the regression
+    /// vehicle. The core offset/channel math is directly covered above by
+    /// testBankToShowTerminalWindowAndKeepsOffsetInSync; this is the end-to-end confirmation
+    /// that a real tool call lands on the right channel.
+    func testSetPanTargetsCorrectTrackInTerminalWindow() async throws {
         let (daemon, registry, fake) = await makeDaemon(Self.tracks(20))
         _ = await registry.call(name: "refresh_state", arguments: ["scope": .string("tracks")])
-        let result = await registry.call(name: "set_volume",
-                                         arguments: ["track": .string("T18"), "db": .double(-6.0)])
+        let result = await registry.call(name: "set_pan",
+                                         arguments: ["track": .string("T18"), "position": .int(-30)])
         XCTAssertNotEqual(result.isError, true)
         let state = await fake.state
-        XCTAssertEqual(state[18].volumeRaw, FaderCurve.raw(fromDB: -6.0), "fader hit the wrong track")
-        XCTAssertEqual(state[17].volumeRaw, 12443, "neighbor moved")
-        XCTAssertEqual(state[19].volumeRaw, 12443, "neighbor moved")
+        XCTAssertEqual(state[18].pan, 34, "pan hit the wrong track")   // 64 + (-30)
+        XCTAssertEqual(state[17].pan, 64, "neighbor moved")
+        XCTAssertEqual(state[19].pan, 64, "neighbor moved")
         _ = daemon
         _ = fake
     }

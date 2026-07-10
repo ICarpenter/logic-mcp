@@ -23,7 +23,7 @@ func trackArgSchema(_ extra: [String: Value], required: [String]) -> Value {
 
 public struct SetVolumeTool: LogicTool {
     public let name = "set_volume"
-    public let description = "Set a track's volume fader. Pass exactly one of: db (absolute, -∞ as -100 … +6.0) or delta (relative dB). Returns the dB Logic prints on its LCD when the fader banner is readable ('source':'logic'); otherwise a value interpolated from the calibrated fader curve ('source':'curve')."
+    public let description = "Set a track's volume fader. Pass exactly one of: db (absolute, -∞ as -100 … +6.0) or delta (relative dB). Converges on the target by nudging the AX slider and re-reading Logic's own fader-level title; returns the dB Logic actually shows ('source':'ax')."
     public let inputSchema = trackArgSchema([
         "db": .object(["type": .string("number")]),
         "delta": .object(["type": .string("number")]),
@@ -57,55 +57,68 @@ public struct SetVolumeTool: LogicTool {
             }
             delta = value
         }
-        let (track, channel) = try await resolveAndBank(daemon, track: trackName)
-
+        let strip = try await daemon.ax.find(trackName)
+        guard let vol = await daemon.ax.control(strip, description: "volume fader") else {
+            throw ToolFailure(error: "no volume fader", layer: "ax",
+                              expected: "a volume slider on '\(trackName)'", observed: "none")
+        }
+        func currentDB() async -> Double? {
+            guard let title = await daemon.ax.titleOfLevel(strip),
+                  let parsed = AXStrip.parseDB(title) else { return nil }
+            return parsed.db
+        }
+        let startDB = await currentDB()
         let targetDB: Double
-        if let db {
-            targetDB = db
-        } else {
-            guard let currentRaw = track.volumeRaw, let currentDB = FaderCurve.dB(fromRaw: currentRaw) else {
-                throw ToolFailure(error: "current volume unknown; cannot apply delta", layer: "model",
-                                  expected: "an observed fader position for '\(track.name)'",
-                                  observed: "none — run refresh_state and retry")
+        if let db { targetDB = db }
+        else {
+            guard let s = startDB else {
+                throw ToolFailure(error: "current volume unknown; cannot apply delta", layer: "ax",
+                                  expected: "a readable fader level for '\(trackName)'", observed: "none")
             }
-            targetDB = currentDB + delta!
+            targetDB = s + delta!
         }
-
-        // The curve only SEEDS the move — the MCU wire carries a 14-bit position, never dB.
-        let echoedRaw = try await daemon.session.moveFader(
-            channel: channel, toRaw: FaderCurve.raw(fromDB: targetDB), timeout: .seconds(1))
-        // Logic prints the exact dB on the LCD only while the fader banner is up (~2s). Let it
-        // settle, then read Logic's own number; fall back to the interpolated curve only when
-        // the banner cannot be read. `source` tells the caller which one they got.
-        await daemon.session.settle(.milliseconds(150))
-        let banner = SurfaceDisplay.valueText(await daemon.session.surface, line: 1, channel: channel)
-        let usedDB: Double?
-        let source: String
-        switch SurfaceDisplay.parseDB(banner) {
-        case .some(let value):   // a real dB, or a recognized "-oo" (value == nil means silent)
-            usedDB = value
-            source = "logic"
-        case .none:              // no readable banner — interpolate from the calibrated curve
-            usedDB = FaderCurve.dB(fromRaw: echoedRaw)
-            source = "curve"
+        let achieved = try await axConvergeVolume(daemon, strip: strip, slider: vol, targetDB: targetDB)
+        let name = await daemon.ax.read(strip).name
+        if let idx = await daemon.model.indexOf(name) {
+            await daemon.model.updateTrack(index: idx) {
+                $0.volumeDB = achieved; $0.volumeIsSilent = (achieved == nil)
+            }
         }
-        await daemon.model.updateTrack(index: track.index) {
-            $0.volumeRaw = echoedRaw
-            $0.volumeDB = usedDB
-            $0.volumeIsSilent = usedDB == nil
-        }
-        let priorDB = track.volumeDB
         await daemon.journal.record(MixMutation(
-            tool: "set_volume", track: track.name,
-            undoArguments: priorDB.map { ["track": track.name, "db": String($0)] },
-            descriptionText: "\(track.name) volume \(priorDB.map { String($0) } ?? "-∞") → \(usedDB.map { String($0) } ?? "-∞") dB"))
+            tool: "set_volume", track: name,
+            undoArguments: startDB.map { ["track": name, "db": String($0)] },
+            descriptionText: "\(name) volume \(startDB.map { String($0) } ?? "-∞") → \(achieved.map { String($0) } ?? "-∞") dB"))
         return .object([
-            "track": .string(track.name),
-            "volumeDB": usedDB.map { Value.double($0) } ?? .null,
-            "volumeRaw": .int(echoedRaw),
-            "source": .string(source),
+            "track": .string(name),
+            "volumeDB": achieved.map { Value.double($0) } ?? .null,
+            "source": .string("ax"),
         ])
     }
+}
+
+/// Converge the fader on `targetDB` using the dB title as the oracle. No curve. Returns the
+/// dB Logic actually renders (nil ⇒ silent). Because AXSetValue NUDGES ±1 toward the passed
+/// value (ax-findings.md), we drive the slider toward its max to go up and toward its min to
+/// go down, one nudge per loop, re-reading the dB title each time until within tolerance or
+/// stuck. This is curve-free and correct against real Logic's relative-set behavior.
+func axConvergeVolume(_ daemon: Daemon, strip: AXHandle, slider: AXHandle, targetDB: Double) async throws -> Double? {
+    func db() async -> Double? {
+        guard let t = await daemon.ax.titleOfLevel(strip) else { return nil }
+        return AXStrip.parseDB(t)?.db
+    }
+    let (loOpt, hiOpt) = await daemon.ax.minMax(of: slider)
+    let lo = loOpt ?? 0, hi = hiOpt ?? 233
+    var last = await db()
+    for _ in 0..<400 {
+        guard let cur = await db() else { break }              // silent/unreadable
+        if abs(cur - targetDB) <= 0.1 { return cur }
+        try await daemon.ax.setValue(cur < targetDB ? hi : lo, of: slider)   // one nudge toward target
+        let now = await db()
+        if now == nil { return cur }
+        if now == last { return now }                          // stuck (boundary/target)
+        last = now
+    }
+    return await db()
 }
 
 /// Mute and solo share the toggle-until-LED-matches shape.

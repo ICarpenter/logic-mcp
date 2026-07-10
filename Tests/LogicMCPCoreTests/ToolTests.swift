@@ -26,23 +26,42 @@ final class ToolTests: XCTestCase {
     }
 
     /// The re-homed query tools (`refresh_state`/`get_project_overview`/`get_track`) and the
-    /// re-homed `set_mute`/`set_solo` now read/write via AX, never the MCU wire — so the fake
-    /// AX mixer must mirror `FakeLogic.standardSession()`'s names (same order) AND carry
-    /// mute/solo AXSwitch children, or those tools see an empty/wrong shadow model, or
-    /// `setToggleAX` finds no mute/solo control at all, even though `FakeLogic` (the MCU
-    /// side) is fully populated.
+    /// re-homed `set_mute`/`set_solo`/`set_volume` now read/write via AX, never the MCU wire —
+    /// so the fake AX mixer must mirror `FakeLogic.standardSession()`'s names (same order) AND
+    /// carry mute/solo AXSwitch children plus a volume fader + fader-level title, or those
+    /// tools see an empty/wrong shadow model, find no control at all, or have no dB title to
+    /// converge on — even though `FakeLogic` (the MCU side) is fully populated.
     static func axProviderForStandardSession() -> FakeAXProvider {
-        let strips = FakeLogic.standardSession().map { t in
-            FakeAXNode(role: "AXLayoutItem", description: t.name, children: [
+        // Every track's volume fader starts at raw 173 / 0.0 dB, mirroring FakeLogic's own
+        // 12443-raw/0.0dB default so the two (independent) shadow states start in agreement.
+        // NUDGE-MODE: models real Logic (AXSetValue moves ±1 toward target); the dB title is
+        // recomputed from the resulting unit after every nudge — same shape as
+        // AXMixToolTests.stripWithVolumeCurve().
+        var volToLevel: [ObjectIdentifier: FakeAXNode] = [:]
+        let strips = FakeLogic.standardSession().map { t -> FakeAXNode in
+            let level = FakeAXNode(role: "AXStaticText", description: "volume fader level",
+                                   title: "volume fader level, 0.0 dB")
+            let vol = FakeAXNode(role: "AXSlider", description: "volume fader", value: 173,
+                                 settable: true, minValue: 0, maxValue: 233)
+            volToLevel[ObjectIdentifier(vol)] = level
+            return FakeAXNode(role: "AXLayoutItem", description: t.name, children: [
                 FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute",
                           stringValue: t.mute ? "on" : "off"),
                 FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "solo",
                           stringValue: t.solo ? "on" : "off"),
+                vol, level,
             ])
         }
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: strips)
         let window = FakeAXNode(role: "AXWindow", children: [area])
-        return FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
+        p.nudgeMode = true
+        p.onSetNumber = { node, resulting in
+            guard let level = volToLevel[ObjectIdentifier(node)] else { return }
+            let db = (resulting - 173) * 0.1
+            level.title = "volume fader level, \(String(format: "%+.1f", db)) dB"
+        }
+        return p
     }
 
     func makeDaemonWithFakeLogic() async -> (daemon: Daemon, registry: ToolRegistry, fake: FakeLogic) {
@@ -155,23 +174,27 @@ final class ToolTests: XCTestCase {
     }
 
     func testSetVolumeAbsolute() async throws {
-        let (_, registry, fake) = await makeDaemonWithFakeLogic()
+        // set_volume is AX-based now (see MixTools.axConvergeVolume) — verify against the AX
+        // fader-level title (ground truth), not FakeLogic's MCU-side state, which this tool
+        // never touches.
+        let (daemon, registry, fake) = await makeDaemonWithFakeLogic()
         let result = await registry.call(name: "set_volume",
                                          arguments: ["track": .string("Vocal"), "db": .double(-6.0)])
         XCTAssertNotEqual(result.isError, true)
         let json = try resultJSON(result)
         XCTAssertEqual(json["volumeDB"] as! Double, -6.0, accuracy: 0.2)
-        let state = await fake.state
-        XCTAssertEqual(state[10].volumeRaw, FaderCurve.raw(fromDB: -6.0))
+        XCTAssertEqual(json["source"] as? String, "ax")
+        let strip = try await daemon.ax.find("Vocal")
+        let controls = await daemon.ax.read(strip)
+        XCTAssertEqual(controls.volumeDB!, -6.0, accuracy: 0.2)
+        _ = fake
     }
 
     func testSetVolumeDelta() async throws {
-        // NOTE: retains `fake` (brief's literal test discarded it as `_`). FakeLogic's
-        // packet loop holds only `[weak self]`; discarding the tuple's third element
-        // lets ARC deallocate FakeLogic as soon as this function returns from
-        // makeDaemonWithFakeLogic(), which kills the mock mid-test and makes the
-        // second set_volume call's fader-echo wait time out. See the recurring
-        // "FakeLogic [weak self]" gotcha — same fix as testSetVolumeAbsolute already uses.
+        // NOTE: retains `fake` — FakeLogic's packet loop holds only `[weak self]`, and this
+        // test drives a real handshake/LCD round-trip via makeDaemonWithFakeLogic(); discarding
+        // the tuple's third element lets ARC deallocate FakeLogic once that call returns. See
+        // the recurring "FakeLogic [weak self]" gotcha.
         let (_, registry, fake) = await makeDaemonWithFakeLogic()
         _ = await registry.call(name: "set_volume",
                                 arguments: ["track": .string("Bass"), "db": .double(-3.0)])
@@ -194,10 +217,9 @@ final class ToolTests: XCTestCase {
     }
 
     func testSetVolumeDeltaOnUnobservedTrackReadsFaderFirst() async throws {
-        // Delta with no prior volume knowledge: tool must first observe the current
-        // position (FakeLogic tracks start at 12443 = 0 dB) and land at -2.
-        // NOTE: retains `fake` — see testSetVolumeDelta's comment on the [weak self] gotcha;
-        // this test also drives a real moveFader round-trip and needs FakeLogic alive for it.
+        // Delta with no prior volume knowledge: tool must first observe the current dB via
+        // the AX fader-level title (axProviderForStandardSession starts every track at 0.0
+        // dB, mirroring FakeLogic's own default) and land at -2.
         let (_, registry, fake) = await makeDaemonWithFakeLogic()
         let result = await registry.call(name: "set_volume",
                                          arguments: ["track": .string("Kick"), "delta": .double(-2.0)])
@@ -368,26 +390,33 @@ final class ToolTests: XCTestCase {
     }
 
     func testUndoLastRestoresVolume() async throws {
-        let (_, registry, fake) = await makeDaemonWithFakeLogic()
+        // set_volume is AX-based now — undo must be verified against the AX fader-level title.
+        let (daemon, registry, fake) = await makeDaemonWithFakeLogic()
         _ = await registry.call(name: "set_volume", arguments: ["track": .string("Vocal"), "db": .double(-6.0)])
         _ = await registry.call(name: "set_volume", arguments: ["track": .string("Vocal"), "db": .double(-2.0)])
         let result = await registry.call(name: "undo_last", arguments: [:])
         XCTAssertNotEqual(result.isError, true)
-        let state = await fake.state
-        XCTAssertEqual(state[10].volumeRaw, FaderCurve.raw(fromDB: -6.0))
+        let strip = try await daemon.ax.find("Vocal")
+        let controls = await daemon.ax.read(strip)
+        XCTAssertEqual(controls.volumeDB!, -6.0, accuracy: 0.2)
+        _ = fake
     }
 
     func testUndoLastTwoSpansTools() async throws {
-        // set_mute is AX-based now — undo of it must be verified against the AX switch.
+        // set_mute/set_volume are both AX-based now — undo of either must be verified
+        // against the AX switch / fader-level title, never FakeLogic's MCU-side state,
+        // which neither tool touches.
         let (daemon, registry, fake) = await makeDaemonWithFakeLogic()
         _ = await registry.call(name: "set_mute", arguments: ["track": .string("Bass"), "on": .bool(true)])
         _ = await registry.call(name: "set_volume", arguments: ["track": .string("Kick"), "db": .double(-9.0)])
         _ = await registry.call(name: "undo_last", arguments: ["n": .int(2)])
-        let strip = try await daemon.ax.find("Bass")
-        let controls = await daemon.ax.read(strip)
-        XCTAssertFalse(controls.mute)                    // mute undone
-        let state = await fake.state
-        XCTAssertEqual(state[0].volumeRaw, 12443)        // volume back to initial 0 dB
+        let bassStrip = try await daemon.ax.find("Bass")
+        let bassControls = await daemon.ax.read(bassStrip)
+        XCTAssertFalse(bassControls.mute)                    // mute undone
+        let kickStrip = try await daemon.ax.find("Kick")
+        let kickControls = await daemon.ax.read(kickStrip)
+        XCTAssertEqual(kickControls.volumeDB!, 0.0, accuracy: 0.2)   // volume back to initial 0 dB
+        _ = fake
     }
 
     func testUndoLastNegativeNIsSafe() async throws {
@@ -422,21 +451,24 @@ final class ToolTests: XCTestCase {
     // either spelling for any numeric argument.
 
     func testSetVolumeAcceptsIntegerDbSameAsDouble() async throws {
-        // JSON `db: -12` decodes to `.int(-12)`; it must be accepted and land at the
-        // same fader position as `db: -12.0`.
+        // JSON `db: -12` decodes to `.int(-12)`; it must be accepted and converge on the
+        // same dB as `db: -12.0`. set_volume is AX-based now — the result carries
+        // `volumeDB`, not `volumeRaw`.
         let (_, registryInt, fakeInt) = await makeDaemonWithFakeLogic()
         let intResult = await registryInt.call(name: "set_volume",
                                                arguments: ["track": .string("Vocal"), "db": .int(-12)])
         XCTAssertNotEqual(intResult.isError, true, "integer dB must be accepted, not rejected")
-        let intRaw = try resultJSON(intResult)["volumeRaw"] as? Int
+        let intDB = try resultJSON(intResult)["volumeDB"] as? Double
 
         let (_, registryDouble, fakeDouble) = await makeDaemonWithFakeLogic()
         let doubleResult = await registryDouble.call(name: "set_volume",
                                                      arguments: ["track": .string("Vocal"), "db": .double(-12.0)])
-        let doubleRaw = try resultJSON(doubleResult)["volumeRaw"] as? Int
+        let doubleDB = try resultJSON(doubleResult)["volumeDB"] as? Double
 
-        XCTAssertEqual(intRaw, doubleRaw, ".int(-12) and .double(-12.0) must echo the same raw")
-        XCTAssertEqual(intRaw, FaderCurve.raw(fromDB: -12.0))
+        XCTAssertNotNil(intDB)
+        XCTAssertNotNil(doubleDB)
+        XCTAssertEqual(intDB!, doubleDB!, accuracy: 0.01, ".int(-12) and .double(-12.0) must converge the same")
+        XCTAssertEqual(intDB!, -12.0, accuracy: 0.2)
         _ = fakeInt
         _ = fakeDouble
     }
@@ -536,13 +568,17 @@ final class ToolTests: XCTestCase {
 
     func testUndoLastAcceptsDoubleN() async throws {
         // `n: 2.0` decodes to `.double(2.0)` and must behave like `.int(2)`.
-        let (_, registry, fake) = await makeDaemonWithFakeLogic()
+        let (daemon, registry, fake) = await makeDaemonWithFakeLogic()
         _ = await registry.call(name: "set_mute", arguments: ["track": .string("Bass"), "on": .bool(true)])
         _ = await registry.call(name: "set_volume", arguments: ["track": .string("Kick"), "db": .double(-9.0)])
         _ = await registry.call(name: "undo_last", arguments: ["n": .double(2.0)])
         let state = await fake.state
         XCTAssertFalse(state[6].mute, "both mutations must be undone when n is a double")
-        XCTAssertEqual(state[0].volumeRaw, 12443)
+        // set_volume is AX-based now — verify the undone volume against the AX fader-level
+        // title, not FakeLogic's MCU-side state, which this tool never touches.
+        let kickStrip = try await daemon.ax.find("Kick")
+        let kickControls = await daemon.ax.read(kickStrip)
+        XCTAssertEqual(kickControls.volumeDB!, 0.0, accuracy: 0.2)
         _ = fake
     }
 }
