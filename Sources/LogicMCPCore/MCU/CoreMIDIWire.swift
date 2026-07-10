@@ -33,6 +33,35 @@ public final class CoreMIDIWire: MCUWire, @unchecked Sendable {
             MIDIClientDispose(client)
             throw CoreMIDIError.destinationCreate(status)
         }
+        // Logic remembers a control surface's ports by their CoreMIDI unique ID,
+        // not by name. CoreMIDI assigns a fresh random UID to a virtual endpoint
+        // unless we claim one, so every daemon restart would orphan Logic's
+        // binding to our SOURCE — Logic keeps transmitting to our destination
+        // (the surface looks alive: LCD, LEDs, meters all arrive) while every
+        // button we send falls on the floor. Claim deterministic UIDs so the
+        // binding survives a restart. A collision (a second instance already
+        // holding the UID) is not fatal: CoreMIDI leaves the system-assigned UID
+        // in place, which is the old behaviour.
+        claimStableUID(source, salt: 1)
+        claimStableUID(destination, salt: 2)
+    }
+
+    private func claimStableUID(_ endpoint: MIDIEndpointRef, salt: UInt32) {
+        MIDIObjectSetIntegerProperty(endpoint, kMIDIPropertyUniqueID,
+                                     Self.stableUID(portName, salt: salt))
+    }
+
+    /// FNV-1a over the port name. Must not use `hashValue`: Swift seeds its
+    /// hasher per process, so that would defeat the whole point.
+    static func stableUID(_ portName: String, salt: UInt32) -> Int32 {
+        var hash: UInt32 = 2_166_136_261 ^ salt
+        for byte in portName.utf8 {
+            hash ^= UInt32(byte)
+            hash = hash &* 16_777_619
+        }
+        // UIDs are Int32 and 0 is not a valid UID; keep it positive and non-zero.
+        let positive = hash & 0x7FFF_FFFF
+        return Int32(positive == 0 ? 1 : positive)
     }
 
     deinit {
