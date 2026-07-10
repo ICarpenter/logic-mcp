@@ -82,4 +82,43 @@ final class AXMixToolTests: XCTestCase {
         guard case .object(let o) = result, case .double(let db)? = o["volumeDB"] else { return XCTFail() }
         XCTAssertEqual(db, -3.0, accuracy: 0.11)
     }
+
+    /// Same nudge-mode shape as `stripWithVolumeCurve`, but the fader STARTS silent (below
+    /// unit 5, where the title has no number — matches real Logic's -∞ region) and only
+    /// starts reporting a numeric dB once it climbs above that region. Regression guard for
+    /// the bug where `axConvergeVolume` read `db() == nil` on iteration 1 and bailed out
+    /// having never nudged the slider.
+    func stripSilentVolume() -> FakeAXProvider {
+        let level = FakeAXNode(role: "AXStaticText", description: "volume fader level",
+                               title: "volume fader level, -∞ dB")
+        let vol = FakeAXNode(role: "AXSlider", description: "volume fader", value: 0,
+                             settable: true, minValue: 0, maxValue: 233)
+        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
+            FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute", stringValue: "off"),
+            vol, level,
+        ])
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication",
+                               children: [FakeAXNode(role: "AXWindow", children: [area])]))
+        p.nudgeMode = true
+        p.onSetNumber = { node, resulting in
+            guard node === vol else { return }
+            if resulting <= 5 {
+                level.title = "volume fader level, -∞ dB"
+            } else {
+                let db = (resulting - 173) * 0.1
+                level.title = "volume fader level, \(String(format: "%+.1f", db)) dB"
+            }
+        }
+        return p
+    }
+
+    func testSetVolumeClimbsOutOfSilence() async throws {
+        let d = await daemon(stripSilentVolume())
+        _ = try await d.axMixer.syncTracks()
+        let result = try await SetVolumeTool(daemon: d).invoke(["track": .string("vox"), "db": .double(-6.0)])
+        guard case .object(let o) = result, case .double(let db)? = o["volumeDB"] else { return XCTFail() }
+        XCTAssertEqual(db, -6.0, accuracy: 0.11)
+        XCTAssertEqual(o["source"], .string("ax"))
+    }
 }

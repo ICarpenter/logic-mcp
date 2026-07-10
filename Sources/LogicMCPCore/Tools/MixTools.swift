@@ -96,29 +96,31 @@ public struct SetVolumeTool: LogicTool {
     }
 }
 
-/// Converge the fader on `targetDB` using the dB title as the oracle. No curve. Returns the
-/// dB Logic actually renders (nil ⇒ silent). Because AXSetValue NUDGES ±1 toward the passed
-/// value (ax-findings.md), we drive the slider toward its max to go up and toward its min to
-/// go down, one nudge per loop, re-reading the dB title each time until within tolerance or
-/// stuck. This is curve-free and correct against real Logic's relative-set behavior.
+/// Converge the fader on `targetDB` by nudging (AXSetValue moves ±1 toward the passed value —
+/// ax-findings.md). Oracle: the dB fader-level title. Handles a SILENT (−∞) start by climbing
+/// out toward the slider max. Uses the slider's raw value for stuck-detection so the silent
+/// region (where the title has no number) doesn't read as "stuck". Returns the dB Logic renders
+/// (nil ⇒ silent). `SILENCE_DB`: a target at or below this is treated as "wants silence".
 func axConvergeVolume(_ daemon: Daemon, strip: AXHandle, slider: AXHandle, targetDB: Double) async throws -> Double? {
-    func db() async -> Double? {
+    let SILENCE_DB = -95.0
+    func level() async -> (db: Double?, silent: Bool)? {
         guard let t = await daemon.ax.titleOfLevel(strip) else { return nil }
-        return AXStrip.parseDB(t)?.db
+        return AXStrip.parseDB(t)
     }
     let (loOpt, hiOpt) = await daemon.ax.minMax(of: slider)
     let lo = loOpt ?? 0, hi = hiOpt ?? 233
-    var last = await db()
+    var lastRaw = await daemon.ax.value(of: slider)
     for _ in 0..<400 {
-        guard let cur = await db() else { break }              // silent/unreadable
-        if abs(cur - targetDB) <= 0.1 { return cur }
-        try await daemon.ax.setValue(cur < targetDB ? hi : lo, of: slider)   // one nudge toward target
-        let now = await db()
-        if now == nil { return cur }
-        if now == last { return now }                          // stuck (boundary/target)
-        last = now
+        guard let lvl = await level() else { break }               // no title ⇒ truly unreadable
+        if lvl.silent && targetDB <= SILENCE_DB { return nil }      // wants silence, already silent
+        if let cur = lvl.db, abs(cur - targetDB) <= 0.1 { return cur }
+        let dirDB = lvl.db ?? -Double.infinity                      // silent ⇒ climb toward hi
+        try await daemon.ax.setValue(dirDB < targetDB ? hi : lo, of: slider)
+        let nowRaw = await daemon.ax.value(of: slider)
+        if nowRaw == lastRaw { return (await level())?.db }         // raw didn't move ⇒ at a boundary
+        lastRaw = nowRaw
     }
-    return await db()
+    return (await level())?.db
 }
 
 /// Mute and solo share the toggle-until-LED-matches shape.
