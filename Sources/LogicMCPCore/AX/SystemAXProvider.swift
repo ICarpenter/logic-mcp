@@ -3,21 +3,34 @@ import Cocoa
 
 /// Real `AXUIElement`-backed provider. Read-only except `perform`/`setNumber`. Never
 /// activates Logic (no `AXFrontmost`, no `NSRunningApplication.activate`).
+///
+/// `app` is optional and `init` never throws for a missing Logic process or missing
+/// Accessibility permission — it just stores `nil`. This lets `Serve` always construct a
+/// `SystemAXProvider` at startup; AX tools then fail gracefully with a structured
+/// `ToolFailure(layer: "ax")` at call time (via `root()`/`windows()`) instead of the daemon
+/// aborting when Logic isn't running yet or permission hasn't been granted.
 public final class SystemAXProvider: AXProvider, @unchecked Sendable {
-    private let app: AXUIElement
+    private let app: AXUIElement?
     public init(bundlePrefix: String = "com.apple.logic") throws {
-        guard AXIsProcessTrusted() else { throw AXUnavailable() }
-        guard let running = NSWorkspace.shared.runningApplications.first(where: {
-            $0.bundleIdentifier?.hasPrefix(bundlePrefix) == true
-        }) else { throw AXUnavailable() }
+        guard AXIsProcessTrusted(),
+              let running = NSWorkspace.shared.runningApplications.first(where: {
+                  $0.bundleIdentifier?.hasPrefix(bundlePrefix) == true
+              }) else {
+            self.app = nil
+            return
+        }
         self.app = AXUIElementCreateApplication(running.processIdentifier)
     }
 
     private func raw(_ h: AXHandle) -> AXUIElement { h.system as! AXUIElement }
 
-    public func root() throws -> AXHandle { AXHandle(system: app) }
+    public func root() throws -> AXHandle {
+        guard let app else { throw AXUnavailable() }
+        return AXHandle(system: app)
+    }
 
     public func windows() -> [AXHandle] {
+        guard let app else { return [] }
         var v: CFTypeRef?
         guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &v) == .success,
               let arr = v as? [AXUIElement] else { return [] }
@@ -62,5 +75,14 @@ public final class SystemAXProvider: AXProvider, @unchecked Sendable {
     public func perform(_ action: AXAction, on h: AXHandle) throws {
         let r = AXUIElementPerformAction(raw(h), action.rawValue as CFString)
         if r != .success { throw AXUnavailable() }
+    }
+    public func minMax(of h: AXHandle) -> (Double?, Double?) {
+        func d(_ key: String) -> Double? {
+            var v: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(raw(h), key as CFString, &v) == .success,
+                  let n = v as? NSNumber else { return nil }
+            return n.doubleValue
+        }
+        return (d(kAXMinValueAttribute as String), d(kAXMaxValueAttribute as String))
     }
 }

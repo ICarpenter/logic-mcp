@@ -13,13 +13,17 @@ final class FakeAXNode {
     var numberValue: Double?
     let settable: Bool
     var children: [FakeAXNode]
+    let minValue: Double?
+    let maxValue: Double?
 
     init(role: String, subrole: String? = nil, description: String? = nil,
          title: String? = nil, stringValue: String? = nil, value: Double? = nil,
-         settable: Bool = false, children: [FakeAXNode] = []) {
+         settable: Bool = false, children: [FakeAXNode] = [],
+         minValue: Double? = nil, maxValue: Double? = nil) {
         self.role = role; self.subrole = subrole; self.description = description
         self.title = title; self.stringValue = stringValue; self.numberValue = value
         self.settable = settable; self.children = children
+        self.minValue = minValue; self.maxValue = maxValue
     }
 }
 
@@ -28,6 +32,11 @@ final class FakeAXProvider: AXProvider, @unchecked Sendable {
     private var byHandle: [AXHandle: FakeAXNode] = [:]
     /// Set by a test to assert the no-focus invariant is never breached.
     private(set) var activateCount = 0
+    /// When true, setNumber moves ±1 toward the target (models real Logic sliders); when
+    /// false it sets absolutely. Default false so Task 1's tests are unchanged.
+    var nudgeMode = false
+    /// Hook that sees the RESULTING value after each setNumber call (Task 6 titles).
+    var onSetNumber: ((FakeAXNode, Double) -> Void)?
 
     init(root: FakeAXNode) {
         self.rootNode = root
@@ -59,9 +68,19 @@ final class FakeAXProvider: AXProvider, @unchecked Sendable {
     }
     func number(of h: AXHandle) -> Double? { node(h)?.numberValue }
     func isSettable(_ h: AXHandle) -> Bool { node(h)?.settable ?? false }
+    func minMax(of h: AXHandle) -> (Double?, Double?) {
+        guard let n = node(h) else { return (nil, nil) }
+        return (n.minValue, n.maxValue)
+    }
     func setNumber(_ v: Double, of h: AXHandle) throws {
         guard let n = node(h), n.settable else { throw AXUnavailable() }
-        n.numberValue = v
+        let cur = n.numberValue ?? 0
+        if nudgeMode {
+            if v > cur { n.numberValue = cur + 1 } else if v < cur { n.numberValue = cur - 1 }
+        } else {
+            n.numberValue = v
+        }
+        onSetNumber?(n, n.numberValue ?? cur)   // hook sees the RESULTING value (Task 6 titles)
     }
     func perform(_ action: AXAction, on h: AXHandle) throws {
         guard let n = node(h) else { throw AXUnavailable() }

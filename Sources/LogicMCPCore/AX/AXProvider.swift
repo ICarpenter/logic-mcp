@@ -42,4 +42,5 @@ public protocol AXProvider: Sendable {
     func isSettable(_ h: AXHandle) -> Bool
     func setNumber(_ v: Double, of h: AXHandle) throws
     func perform(_ action: AXAction, on h: AXHandle) throws
+    func minMax(of h: AXHandle) -> (Double?, Double?)
 }

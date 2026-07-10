@@ -115,7 +115,7 @@ final class EventRaceTests: XCTestCase {
     func testSetMuteAlwaysCatchesSynchronousLEDEcho() async throws {
         for i in 0..<Self.iterations {
             let wire = SyncEchoWire()
-            let daemon = await Daemon(wire: wire)
+            let daemon = await Daemon(wire: wire, axProvider: FakeAXProvider(root: FakeAXNode(role: "AXApplication")))
             await daemon.model.replaceTracks(["Snare"])   // avoid enumeration; index 0, channel 0
             let registry = ToolRegistry()
             await daemon.registerAllTools(in: registry)
@@ -132,7 +132,7 @@ final class EventRaceTests: XCTestCase {
     func testSetPanAlwaysCatchesSynchronousRingEcho() async throws {
         for i in 0..<Self.iterations {
             let wire = SyncEchoWire(paintNormalized: true)
-            let daemon = await Daemon(wire: wire)
+            let daemon = await Daemon(wire: wire, axProvider: FakeAXProvider(root: FakeAXNode(role: "AXApplication")))
             await daemon.model.replaceTracks(["Snare"])   // avoid enumeration; index 0, channel 0
             let registry = ToolRegistry()
             await daemon.registerAllTools(in: registry)

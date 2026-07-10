@@ -61,7 +61,7 @@ final class MixerBankingTests: XCTestCase {
         async -> (daemon: Daemon, registry: ToolRegistry, fake: FakeLogic) {
         let (daemonEnd, logicEnd) = InMemoryWire.pair()
         let fake = FakeLogic(wire: logicEnd, tracks: tracks)
-        let daemon = await Daemon(wire: daemonEnd)
+        let daemon = await Daemon(wire: daemonEnd, axProvider: FakeAXProvider(root: FakeAXNode(role: "AXApplication")))
         await fake.start()
         let registry = ToolRegistry()
         await daemon.registerAllTools(in: registry)

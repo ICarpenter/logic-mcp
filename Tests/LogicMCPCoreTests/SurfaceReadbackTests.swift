@@ -19,7 +19,7 @@ final class SurfaceReadbackTests: XCTestCase {
         let (daemonEnd, logicEnd) = InMemoryWire.pair()
         let fake = FakeLogic(wire: logicEnd, tracks: tracks,
                              bannerLifetime: bannerLifetime, ringEchoes: ringEchoes, panSnap: panSnap)
-        let daemon = await Daemon(wire: daemonEnd)
+        let daemon = await Daemon(wire: daemonEnd, axProvider: FakeAXProvider(root: FakeAXNode(role: "AXApplication")))
         await fake.start()
         let registry = ToolRegistry()
         await daemon.registerAllTools(in: registry)

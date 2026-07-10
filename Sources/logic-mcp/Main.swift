@@ -18,7 +18,10 @@ struct Serve: AsyncParsableCommand {
 
     func run() async throws {
         let wire = try CoreMIDIWire()
-        let daemon = await Daemon(wire: wire)
+        // SystemAXProvider's init never throws for missing Logic/permission — it stores a
+        // nil app and AX tools fail gracefully (ToolFailure(layer: "ax")) at call time.
+        let axProvider = try SystemAXProvider()
+        let daemon = await Daemon(wire: wire, axProvider: axProvider)
         let registry = ToolRegistry()
         await daemon.registerAllTools(in: registry)
 
