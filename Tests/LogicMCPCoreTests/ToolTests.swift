@@ -25,12 +25,21 @@ final class ToolTests: XCTestCase {
         XCTAssertTrue(json.contains("\"layer\":\"daemon\""))
     }
 
-    /// The three re-homed query tools (`refresh_state`/`get_project_overview`/`get_track`)
-    /// now read via `AXMixer`, never the MCU wire — so the fake AX mixer must mirror
-    /// `FakeLogic.standardSession()`'s names, in the same order, or those tools see an
-    /// empty/wrong shadow model even though `FakeLogic` (the MCU side) is fully populated.
+    /// The re-homed query tools (`refresh_state`/`get_project_overview`/`get_track`) and the
+    /// re-homed `set_mute`/`set_solo` now read/write via AX, never the MCU wire — so the fake
+    /// AX mixer must mirror `FakeLogic.standardSession()`'s names (same order) AND carry
+    /// mute/solo AXSwitch children, or those tools see an empty/wrong shadow model, or
+    /// `setToggleAX` finds no mute/solo control at all, even though `FakeLogic` (the MCU
+    /// side) is fully populated.
     static func axProviderForStandardSession() -> FakeAXProvider {
-        let strips = FakeLogic.standardSession().map { FakeAXNode(role: "AXLayoutItem", description: $0.name) }
+        let strips = FakeLogic.standardSession().map { t in
+            FakeAXNode(role: "AXLayoutItem", description: t.name, children: [
+                FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute",
+                          stringValue: t.mute ? "on" : "off"),
+                FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "solo",
+                          stringValue: t.solo ? "on" : "off"),
+            ])
+        }
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: strips)
         let window = FakeAXNode(role: "AXWindow", children: [area])
         return FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
@@ -198,26 +207,33 @@ final class ToolTests: XCTestCase {
     }
 
     func testSetMuteOnAndIdempotent() async throws {
-        let (_, registry, fake) = await makeDaemonWithFakeLogic()
+        // set_mute is AX-based now (see MixTools.setToggleAX) — verify against the AX
+        // switch's actual value, not FakeLogic's MCU-side state, which this tool never touches.
+        let (daemon, registry, fake) = await makeDaemonWithFakeLogic()
         let result = await registry.call(name: "set_mute",
                                          arguments: ["track": .string("Snare"), "on": .bool(true)])
         let json = try resultJSON(result)
         XCTAssertEqual(json["mute"] as? Bool, true)
-        var state = await fake.state
-        XCTAssertTrue(state[1].mute)
+        let strip = try await daemon.ax.find("Snare")
+        var controls = await daemon.ax.read(strip)
+        XCTAssertTrue(controls.mute)
         // Setting the same value again must NOT toggle it back off.
         _ = await registry.call(name: "set_mute",
                                 arguments: ["track": .string("Snare"), "on": .bool(true)])
-        state = await fake.state
-        XCTAssertTrue(state[1].mute)
+        controls = await daemon.ax.read(strip)
+        XCTAssertTrue(controls.mute)
+        _ = fake
     }
 
     func testSetSolo() async throws {
-        let (_, registry, fake) = await makeDaemonWithFakeLogic()
+        // set_solo is AX-based now — verify against the AX switch, not FakeLogic's MCU state.
+        let (daemon, registry, fake) = await makeDaemonWithFakeLogic()
         _ = await registry.call(name: "set_solo",
                                 arguments: ["track": .string("Bass"), "on": .bool(true)])
-        let state = await fake.state
-        XCTAssertTrue(state[6].solo)
+        let strip = try await daemon.ax.find("Bass")
+        let controls = await daemon.ax.read(strip)
+        XCTAssertTrue(controls.solo)
+        _ = fake
     }
 
     func testSetPanVerifiedByRing() async throws {
@@ -362,24 +378,30 @@ final class ToolTests: XCTestCase {
     }
 
     func testUndoLastTwoSpansTools() async throws {
-        let (_, registry, fake) = await makeDaemonWithFakeLogic()
+        // set_mute is AX-based now — undo of it must be verified against the AX switch.
+        let (daemon, registry, fake) = await makeDaemonWithFakeLogic()
         _ = await registry.call(name: "set_mute", arguments: ["track": .string("Bass"), "on": .bool(true)])
         _ = await registry.call(name: "set_volume", arguments: ["track": .string("Kick"), "db": .double(-9.0)])
         _ = await registry.call(name: "undo_last", arguments: ["n": .int(2)])
+        let strip = try await daemon.ax.find("Bass")
+        let controls = await daemon.ax.read(strip)
+        XCTAssertFalse(controls.mute)                    // mute undone
         let state = await fake.state
-        XCTAssertFalse(state[6].mute)                    // mute undone
         XCTAssertEqual(state[0].volumeRaw, 12443)        // volume back to initial 0 dB
     }
 
     func testUndoLastNegativeNIsSafe() async throws {
-        let (_, registry, fake) = await makeDaemonWithFakeLogic()
+        // set_mute is AX-based now — verify the still-muted state against the AX switch.
+        let (daemon, registry, fake) = await makeDaemonWithFakeLogic()
         _ = await registry.call(name: "set_mute", arguments: ["track": .string("Bass"), "on": .bool(true)])
         let result = await registry.call(name: "undo_last", arguments: ["n": .int(-1)])
         XCTAssertNotEqual(result.isError, true)
         let json = try resultJSON(result)
         XCTAssertEqual((json["undone"] as! [Any]).count, 0)
-        let state = await fake.state
-        XCTAssertTrue(state[6].mute)   // still muted — nothing was undone
+        let strip = try await daemon.ax.find("Bass")
+        let controls = await daemon.ax.read(strip)
+        XCTAssertTrue(controls.mute)   // still muted — nothing was undone
+        _ = fake
     }
 
     func testUndoEmptyJournal() async throws {

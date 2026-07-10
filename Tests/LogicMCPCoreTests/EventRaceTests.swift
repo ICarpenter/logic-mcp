@@ -112,20 +112,24 @@ final class EventRaceTests: XCTestCase {
     // state change that must be LED-confirmed (never a no-op).
     private static let iterations = 120
 
+    /// `set_mute` was re-homed onto AX (Task 5) and no longer opens an MCU event
+    /// subscription at all, so it can no longer exercise this race. The retained MCU
+    /// `setToggle` free function still has the subscribe-before-press contract this test
+    /// guards, so call it directly to keep the regression coverage alive for any future
+    /// MCU-toggle caller.
     func testSetMuteAlwaysCatchesSynchronousLEDEcho() async throws {
         for i in 0..<Self.iterations {
             let wire = SyncEchoWire()
             let daemon = await Daemon(wire: wire, axProvider: FakeAXProvider(root: FakeAXNode(role: "AXApplication")))
             await daemon.model.replaceTracks(["Snare"])   // avoid enumeration; index 0, channel 0
-            let registry = ToolRegistry()
-            await daemon.registerAllTools(in: registry)
 
-            let result = await registry.call(name: "set_mute",
-                                             arguments: ["track": .string("Snare"), "on": .bool(true)])
-            XCTAssertNotEqual(result.isError, true,
-                              "iteration \(i): set_mute must open its LED subscription BEFORE "
-                              + "pressing — a late subscriber misses the echo and fails")
-            XCTAssertEqual(try resultJSON(result)["mute"] as? Bool, true, "iteration \(i)")
+            let result = try await setToggle(daemon, trackName: "Snare", on: true,
+                                             button: { .mute(channel: $0) },
+                                             read: { $0.mute }, write: { $0.mute = $1 }, label: "mute")
+            guard case .object(let o) = result else {
+                return XCTFail("iteration \(i): expected an object result")
+            }
+            XCTAssertEqual(o["mute"], .bool(true), "iteration \(i)")
         }
     }
 

@@ -141,9 +141,40 @@ func setToggle(_ daemon: Daemon, trackName: String, on: Bool,
     return .object(["track": .string(track.name), label.contains("mute") ? "mute" : "solo": .bool(on)])
 }
 
+/// Mute/solo via AX: read the switch's value, press only if it differs, verify by re-read.
+/// Idempotent by construction. No focus, no MCU.
+func setToggleAX(_ daemon: Daemon, trackName: String, on: Bool, isMute: Bool) async throws -> Value {
+    let label = isMute ? "mute" : "solo"
+    let strip = try await daemon.ax.find(trackName)
+    let priorControls = await daemon.ax.read(strip)
+    let prior = isMute ? priorControls.mute : priorControls.solo
+    guard let button = await daemon.ax.control(strip, description: label) else {
+        throw ToolFailure(error: "no \(label) control", layer: "ax",
+                          expected: "a \(label) button on '\(trackName)'", observed: "none")
+    }
+    let current = await daemon.ax.stringValue(.value, of: button) == "on"
+    if current != on {
+        try await daemon.ax.press(button)
+        let after = await daemon.ax.stringValue(.value, of: button) == "on"
+        guard after == on else {
+            throw ToolFailure(error: "\(label) not confirmed", layer: "ax",
+                              expected: "\(label) \(on)", observed: "\(after)")
+        }
+    }
+    let name = priorControls.name
+    await daemon.journal.record(MixMutation(
+        tool: isMute ? "set_mute" : "set_solo", track: name,
+        undoArguments: ["track": name, "on": prior ? "true" : "false"],
+        descriptionText: "\(name) \(label) \(prior) → \(on)"))
+    if let idx = await daemon.model.indexOf(name) {
+        await daemon.model.updateTrack(index: idx) { if isMute { $0.mute = on } else { $0.solo = on } }
+    }
+    return .object(["track": .string(name), label: .bool(on)])
+}
+
 public struct SetMuteTool: LogicTool {
     public let name = "set_mute"
-    public let description = "Mute or unmute a track. Idempotent; verified by Logic's mute-LED echo."
+    public let description = "Mute or unmute a track. Idempotent; verified by re-reading the AX mute switch."
     public let inputSchema = trackArgSchema(["on": .object(["type": .string("boolean")])], required: ["on"])
     let daemon: Daemon
     public func invoke(_ args: [String: Value]) async throws -> Value {
@@ -151,15 +182,13 @@ public struct SetMuteTool: LogicTool {
         guard let on = args["on"]?.boolValue else {
             throw ToolFailure(error: "missing required argument 'on'", layer: "daemon")
         }
-        return try await setToggle(daemon, trackName: trackName, on: on,
-                                   button: { .mute(channel: $0) },
-                                   read: { $0.mute }, write: { $0.mute = $1 }, label: "mute")
+        return try await setToggleAX(daemon, trackName: trackName, on: on, isMute: true)
     }
 }
 
 public struct SetSoloTool: LogicTool {
     public let name = "set_solo"
-    public let description = "Solo or unsolo a track. Idempotent; verified by Logic's solo-LED echo."
+    public let description = "Solo or unsolo a track. Idempotent; verified by re-reading the AX solo switch."
     public let inputSchema = trackArgSchema(["on": .object(["type": .string("boolean")])], required: ["on"])
     let daemon: Daemon
     public func invoke(_ args: [String: Value]) async throws -> Value {
@@ -167,9 +196,7 @@ public struct SetSoloTool: LogicTool {
         guard let on = args["on"]?.boolValue else {
             throw ToolFailure(error: "missing required argument 'on'", layer: "daemon")
         }
-        return try await setToggle(daemon, trackName: trackName, on: on,
-                                   button: { .solo(channel: $0) },
-                                   read: { $0.solo }, write: { $0.solo = $1 }, label: "solo")
+        return try await setToggleAX(daemon, trackName: trackName, on: on, isMute: false)
     }
 }
 

@@ -65,6 +65,8 @@ public actor ProjectModel {
         mutate(&tracks[index])
     }
 
+    public func indexOf(_ name: String) -> Int? { tracks.firstIndex { $0.name == name } }
+
     public func setTransport(_ mutate: (inout TransportState) -> Void) {
         mutate(&transport)
     }
