@@ -124,8 +124,13 @@ public actor MCUSession {
         while await waitFor(timeout: quiet, { _ in true }) != nil {}
     }
 
-    private static func first(of stream: AsyncStream<MCUEvent>, timeout: Duration,
-                              where predicate: @escaping @Sendable (MCUEvent) -> Bool) async -> MCUEvent? {
+    /// Wait for the first event on an ALREADY-OPEN `events()` stream that satisfies `predicate`,
+    /// or `nil` on timeout. `events()` is LIVE-ONLY (it does not replay), so a caller that must
+    /// not miss an echo has to open the stream BEFORE triggering the action, then pass it here —
+    /// exactly the shape `moveFader` uses. Subscribing AFTER the action (e.g. `async let` around
+    /// a `press`) can miss an echo that Logic delivers before the subscription registers.
+    public static func first(of stream: AsyncStream<MCUEvent>, timeout: Duration,
+                             where predicate: @escaping @Sendable (MCUEvent) -> Bool) async -> MCUEvent? {
         await withTaskGroup(of: MCUEvent?.self) { group in
             group.addTask {
                 for await event in stream where predicate(event) { return event }

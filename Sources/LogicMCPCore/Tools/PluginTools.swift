@@ -10,8 +10,15 @@ struct PluginParamCell: Sendable {
 
 /// Restore the pan view before throwing, so a failed lookup doesn't leave the
 /// surface stuck in a plugin view (same convention as SendTools.swift's restoreMode()).
+///
+/// The press switches the V-Pot assignment away from PLUGIN; `normalizeSurface()` then
+/// OBSERVES where it landed and corrects it. The press alone is not enough: `.assignPan`
+/// is a toggle, so if the surface was already in pan it flips into the single-parameter
+/// page where every V-Pot but the first is dead.
 private func restorePanBeforeThrow(_ daemon: Daemon) async {
     await daemon.session.press(.assignPan)
+    await daemon.session.settle(.milliseconds(150))
+    try? await daemon.navigator.normalizeSurface()
 }
 
 func enterPluginEdit(_ daemon: Daemon, trackName: String, slot: Int) async throws
@@ -67,9 +74,12 @@ func enterPluginEdit(_ daemon: Daemon, trackName: String, slot: Int) async throw
 }
 
 /// Leave plugin edit and restore the pan view all other tools assume.
+/// Press to leave PLUGIN, then normalize — see `restorePanBeforeThrow` for why the
+/// press alone cannot be trusted.
 func exitPluginEdit(_ daemon: Daemon) async {
     await daemon.session.press(.assignPan)
     await daemon.session.settle(.milliseconds(150))
+    try? await daemon.navigator.normalizeSurface()
 }
 
 public struct GetPluginParamsTool: LogicTool {
@@ -79,7 +89,7 @@ public struct GetPluginParamsTool: LogicTool {
     let daemon: Daemon
     public func invoke(_ args: [String: Value]) async throws -> Value {
         let trackName = try requireString(args, "track", tool: name)
-        guard let slot = args["slot"]?.intValue, (0...7).contains(slot) else {
+        guard let slot = args["slot"]?.coercedInt, (0...7).contains(slot) else {
             throw ToolFailure(error: "'slot' must be an integer in 0…7", layer: "daemon")
         }
         let (track, params) = try await enterPluginEdit(daemon, trackName: trackName, slot: slot)
@@ -106,14 +116,14 @@ public struct SetPluginParamTool: LogicTool {
 
     public func invoke(_ args: [String: Value]) async throws -> Value {
         let trackName = try requireString(args, "track", tool: name)
-        guard let slot = args["slot"]?.intValue, (0...7).contains(slot) else {
+        guard let slot = args["slot"]?.coercedInt, (0...7).contains(slot) else {
             throw ToolFailure(error: "'slot' must be an integer in 0…7", layer: "daemon")
         }
-        let paramKey = args["param"]?.stringValue ?? args["param"]?.intValue.map(String.init)
+        let paramKey = args["param"]?.stringValue ?? args["param"]?.coercedInt.map(String.init)
         guard let paramKey else {
             throw ToolFailure(error: "missing required argument 'param'", layer: "daemon")
         }
-        guard let value = args["value"]?.doubleValue, (0.0...1.0).contains(value) else {
+        guard let value = args["value"]?.coercedDouble, (0.0...1.0).contains(value) else {
             throw ToolFailure(error: "'value' must be a number in 0.0…1.0", layer: "daemon")
         }
 

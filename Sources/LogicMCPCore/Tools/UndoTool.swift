@@ -11,7 +11,7 @@ public struct UndoLastTool: LogicTool {
     let registry: ToolRegistry
 
     public func invoke(_ args: [String: Value]) async throws -> Value {
-        let n = args["n"]?.intValue ?? 1
+        let n = args["n"]?.coercedInt ?? 1
         var undone: [Value] = []
         var skipped: [Value] = []
         for mutation in await daemon.journal.popLast(n) {

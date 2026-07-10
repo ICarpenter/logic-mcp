@@ -12,7 +12,7 @@ public struct SetSendTool: LogicTool {
     public func invoke(_ args: [String: Value]) async throws -> Value {
         let trackName = try requireString(args, "track", tool: name)
         let bus = try requireString(args, "bus", tool: name)
-        guard let level = args["level"]?.intValue, (0...127).contains(level) else {
+        guard let level = args["level"]?.coercedInt, (0...127).contains(level) else {
             throw ToolFailure(error: "'level' must be an integer in 0…127", layer: "daemon")
         }
         let (track, channel) = try await resolveAndBank(daemon, track: trackName)
@@ -21,8 +21,15 @@ public struct SetSendTool: LogicTool {
         await daemon.session.settle(.milliseconds(150))
 
         // Restore the pan view all other tools assume — awaited on every exit path
-        // (a fire-and-forget defer would race the next tool call).
-        func restoreMode() async { await daemon.session.press(.assignPan) }
+        // (a fire-and-forget defer would race the next tool call). The press leaves the
+        // SEND assignment; `normalizeSurface()` then observes where it landed and corrects
+        // it, because `.assignPan` is a toggle and would otherwise flip an already-pan
+        // surface into the single-parameter page where V-Pots 1-7 are dead.
+        func restoreMode() async {
+            await daemon.session.press(.assignPan)
+            await daemon.session.settle(.milliseconds(150))
+            try? await daemon.navigator.normalizeSurface()
+        }
 
         let surface = await daemon.session.surface
         let wanted = bus.lowercased()

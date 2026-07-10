@@ -36,6 +36,40 @@ func requireString(_ args: [String: Value], _ key: String, tool: String) throws 
     return value
 }
 
+// MARK: - JSON-faithful numeric coercion
+//
+// JSON has exactly ONE number type, but the MCP SDK decodes it into two case-strict
+// `Value` cases: `-12` becomes `.int(-12)` and `-12.5` becomes `.double(-12.5)`. The
+// SDK's `intValue`/`doubleValue` accessors match ONLY their own case
+// (`.int(-12).doubleValue == nil`, `.double(2.0).intValue == nil`), so a caller who
+// writes the perfectly valid JSON `db: -12` gets rejected by `doubleValue`. Do NOT
+// assume the SDK reconciles the two cases — it does not. Every numeric tool argument
+// funnels through these coercing accessors so either spelling is accepted the way JSON
+// semantics imply.
+extension Value {
+    /// A `Double` from either a JSON float (`.double`) or a JSON integer (`.int`).
+    var coercedDouble: Double? {
+        switch self {
+        case .double(let d): return d
+        case .int(let i): return Double(i)
+        default: return nil
+        }
+    }
+
+    /// An `Int` from a JSON integer (`.int`), or from a JSON float (`.double`) ONLY when
+    /// it is integral and fits in `Int`. A non-integral value like `2.5` is rejected,
+    /// never silently truncated — an integer field should refuse a fractional number.
+    var coercedInt: Int? {
+        switch self {
+        case .int(let i): return i
+        case .double(let d):
+            guard d.rounded() == d else { return nil }   // integral only
+            return Int(exactly: d)                        // also enforces Int range
+        default: return nil
+        }
+    }
+}
+
 public struct GetProjectOverviewTool: LogicTool {
     public let name = "get_project_overview"
     public let description = "Snapshot of the shadow project model: all tracks with mix state, plus transport. Cheap; does not touch Logic. If 'stale' is true, call refresh_state first."

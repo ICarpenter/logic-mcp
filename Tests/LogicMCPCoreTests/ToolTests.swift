@@ -175,7 +175,7 @@ final class ToolTests: XCTestCase {
 
     func testSetVolumeDeltaOnUnobservedTrackReadsFaderFirst() async throws {
         // Delta with no prior volume knowledge: tool must first observe the current
-        // position (FakeLogic tracks start at 12288 = 0 dB) and land at -2.
+        // position (FakeLogic tracks start at 12443 = 0 dB) and land at -2.
         // NOTE: retains `fake` — see testSetVolumeDelta's comment on the [weak self] gotcha;
         // this test also drives a real moveFader round-trip and needs FakeLogic alive for it.
         let (_, registry, fake) = await makeDaemonWithFakeLogic()
@@ -357,7 +357,7 @@ final class ToolTests: XCTestCase {
         _ = await registry.call(name: "undo_last", arguments: ["n": .int(2)])
         let state = await fake.state
         XCTAssertFalse(state[6].mute)                    // mute undone
-        XCTAssertEqual(state[0].volumeRaw, 12288)        // volume back to initial 0 dB
+        XCTAssertEqual(state[0].volumeRaw, 12443)        // volume back to initial 0 dB
     }
 
     func testUndoLastNegativeNIsSafe() async throws {
@@ -378,6 +378,138 @@ final class ToolTests: XCTestCase {
         let result = await registry.call(name: "undo_last", arguments: [:])
         let json = try resultJSON(result)
         XCTAssertEqual((json["undone"] as! [Any]).count, 0)
+        _ = fake
+    }
+
+    // MARK: - JSON numeric coercion
+    //
+    // JSON has one number type, but the MCP SDK decodes `-12` to `.int(-12)` and
+    // `-12.5` to `.double(-12.5)`, and its `intValue`/`doubleValue` accessors match
+    // only their own case. These tests pin the behaviour that a caller may write
+    // either spelling for any numeric argument.
+
+    func testSetVolumeAcceptsIntegerDbSameAsDouble() async throws {
+        // JSON `db: -12` decodes to `.int(-12)`; it must be accepted and land at the
+        // same fader position as `db: -12.0`.
+        let (_, registryInt, fakeInt) = await makeDaemonWithFakeLogic()
+        let intResult = await registryInt.call(name: "set_volume",
+                                               arguments: ["track": .string("Vocal"), "db": .int(-12)])
+        XCTAssertNotEqual(intResult.isError, true, "integer dB must be accepted, not rejected")
+        let intRaw = try resultJSON(intResult)["volumeRaw"] as? Int
+
+        let (_, registryDouble, fakeDouble) = await makeDaemonWithFakeLogic()
+        let doubleResult = await registryDouble.call(name: "set_volume",
+                                                     arguments: ["track": .string("Vocal"), "db": .double(-12.0)])
+        let doubleRaw = try resultJSON(doubleResult)["volumeRaw"] as? Int
+
+        XCTAssertEqual(intRaw, doubleRaw, ".int(-12) and .double(-12.0) must echo the same raw")
+        XCTAssertEqual(intRaw, FaderCurve.raw(fromDB: -12.0))
+        _ = fakeInt
+        _ = fakeDouble
+    }
+
+    func testSetVolumeAcceptsIntegerDelta() async throws {
+        // Kick starts at 0.0 dB (raw 12443); delta `.int(3)` must land at +3.0 dB.
+        let (_, registry, fake) = await makeDaemonWithFakeLogic()
+        let result = await registry.call(name: "set_volume",
+                                         arguments: ["track": .string("Kick"), "delta": .int(3)])
+        XCTAssertNotEqual(result.isError, true, "integer delta must be accepted, not rejected")
+        let json = try resultJSON(result)
+        XCTAssertEqual(json["volumeDB"] as! Double, 3.0, accuracy: 0.3)
+        _ = fake
+    }
+
+    func testSetVolumeArgErrorsAreDistinguishable() async throws {
+        // "neither", "both", and "supplied but not a number" must be three DIFFERENT
+        // messages — a caller who passed a bad `db` should not be told they need
+        // exactly one of two arguments.
+        let (_, registry, fake) = await makeDaemonWithFakeLogic()
+
+        let neither = await registry.call(name: "set_volume", arguments: ["track": .string("Bass")])
+        XCTAssertEqual(neither.isError, true)
+        let neitherMsg = try resultJSON(neither)["error"] as? String ?? ""
+
+        let both = await registry.call(name: "set_volume", arguments: [
+            "track": .string("Bass"), "db": .double(0), "delta": .double(1),
+        ])
+        XCTAssertEqual(both.isError, true)
+        let bothMsg = try resultJSON(both)["error"] as? String ?? ""
+
+        let notANumber = await registry.call(name: "set_volume", arguments: [
+            "track": .string("Bass"), "db": .string("loud"),
+        ])
+        XCTAssertEqual(notANumber.isError, true)
+        let notANumberMsg = try resultJSON(notANumber)["error"] as? String ?? ""
+
+        XCTAssertNotEqual(neitherMsg, bothMsg, "neither vs both must differ")
+        XCTAssertNotEqual(neitherMsg, notANumberMsg, "neither vs non-numeric must differ")
+        XCTAssertNotEqual(bothMsg, notANumberMsg, "both vs non-numeric must differ")
+        _ = fake
+    }
+
+    func testSetPluginParamAcceptsIntegerBoundaryValues() async throws {
+        // value: 1 (fully open) and value: 0 (bypassed) are the most natural things a
+        // caller writes; both decode to `.int` and must be accepted at the 0…1 bounds.
+        let (_, registryOne, fakeOne) = await makeDaemonWithFakeLogic()
+        let openResult = await registryOne.call(name: "set_plugin_param", arguments: [
+            "track": .string("Vocal"), "slot": .int(0), "param": .string("HiGain"), "value": .int(1),
+        ])
+        XCTAssertNotEqual(openResult.isError, true, "value: 1 must be accepted")
+        let openState = await fakeOne.state
+        XCTAssertEqual(openState[10].plugins[0].params[6].value, 1.0, accuracy: 0.03)
+
+        let (_, registryZero, fakeZero) = await makeDaemonWithFakeLogic()
+        let zeroResult = await registryZero.call(name: "set_plugin_param", arguments: [
+            "track": .string("Vocal"), "slot": .int(0), "param": .string("HiGain"), "value": .int(0),
+        ])
+        XCTAssertNotEqual(zeroResult.isError, true, "value: 0 must be accepted")
+        let zeroState = await fakeZero.state
+        XCTAssertEqual(zeroState[10].plugins[0].params[6].value, 0.0, accuracy: 0.03)
+        _ = fakeOne
+        _ = fakeZero
+    }
+
+    func testSetPanAcceptsIntegralDoubleButRejectsFractional() async throws {
+        // `position: -30.0` is an integral double and must be accepted; `position: 2.5`
+        // is fractional and must be REJECTED, never truncated to 2.
+        let (_, registry, fake) = await makeDaemonWithFakeLogic()
+        let ok = await registry.call(name: "set_pan",
+                                     arguments: ["track": .string("Keys"), "position": .double(-30.0)])
+        XCTAssertNotEqual(ok.isError, true, "integral double position must be accepted")
+        var state = await fake.state
+        XCTAssertEqual(state[9].pan, 34)   // 64 + (-30)
+
+        let rejected = await registry.call(name: "set_pan",
+                                           arguments: ["track": .string("Keys"), "position": .double(2.5)])
+        XCTAssertEqual(rejected.isError, true, "fractional position must be rejected, not truncated")
+        state = await fake.state
+        XCTAssertEqual(state[9].pan, 34, "pan must be unchanged after the rejected 2.5")
+        _ = fake
+    }
+
+    func testSetSendAcceptsIntegralDoubleLevel() async throws {
+        // `level: 100.0` decodes to `.double(100.0)`; an integral double must be accepted.
+        let (_, registry, fake) = await makeDaemonWithFakeLogic()
+        let result = await registry.call(name: "set_send", arguments: [
+            "track": .string("Vocal"), "bus": .string("Bus 2"), "level": .double(100.0),
+        ])
+        XCTAssertNotEqual(result.isError, true, "integral double level must be accepted")
+        let json = try resultJSON(result)
+        XCTAssertEqual(json["level"] as? Int, 100)
+        let state = await fake.state
+        XCTAssertEqual(state[10].sends[1].level, 100)
+        _ = fake
+    }
+
+    func testUndoLastAcceptsDoubleN() async throws {
+        // `n: 2.0` decodes to `.double(2.0)` and must behave like `.int(2)`.
+        let (_, registry, fake) = await makeDaemonWithFakeLogic()
+        _ = await registry.call(name: "set_mute", arguments: ["track": .string("Bass"), "on": .bool(true)])
+        _ = await registry.call(name: "set_volume", arguments: ["track": .string("Kick"), "db": .double(-9.0)])
+        _ = await registry.call(name: "undo_last", arguments: ["n": .double(2.0)])
+        let state = await fake.state
+        XCTAssertFalse(state[6].mute, "both mutations must be undone when n is a double")
+        XCTAssertEqual(state[0].volumeRaw, 12443)
         _ = fake
     }
 }

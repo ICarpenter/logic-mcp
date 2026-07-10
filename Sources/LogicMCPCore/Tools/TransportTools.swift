@@ -7,11 +7,14 @@ func transportValue(_ t: TransportState) -> Value {
 /// Press a transport button, verify via LED echo, update the model.
 func pressTransport(_ daemon: Daemon, button: MCUButton, expectLED: MCUButton, expectState: LEDState,
                     mutate: @escaping @Sendable (inout TransportState) -> Void) async throws -> Value {
-    async let led = daemon.session.waitFor(timeout: .seconds(1)) {
+    // Open the event subscription BEFORE pressing — `events()` is live-only, so an `async let`
+    // that subscribes after the press can miss an echo Logic delivers before it registers.
+    let stream = await daemon.session.events()
+    await daemon.session.press(button)
+    let led = await MCUSession.first(of: stream, timeout: .seconds(1)) {
         if case .led(let b, let s) = $0 { return b == expectLED && s == expectState } else { return false }
     }
-    await daemon.session.press(button)
-    guard await led != nil else {
+    guard led != nil else {
         throw ToolFailure(error: "transport button not confirmed", layer: "mcu",
                           expected: "LED \(expectLED) → \(expectState)", observed: "no LED echo within 1s")
     }
