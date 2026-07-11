@@ -132,4 +132,29 @@ final class AXMixToolTests: XCTestCase {
         let snap = await d.model.snapshot
         XCTAssertEqual(snap.tracks[0].pan, 34)   // -30 + 64
     }
+
+    func testSetSendReturnsNotAccessibleError() async throws {
+        let d = await daemon(oneStrip())
+        _ = try await d.axMixer.syncTracks()
+        do {
+            _ = try await SetSendTool(daemon: d).invoke([
+                "track": .string("vox"), "bus": .string("Aux 1"), "level": .int(90)])
+            XCTFail("expected a not-accessible ToolFailure")
+        } catch let f as ToolFailure {
+            XCTAssertEqual(f.layer, "ax")
+            XCTAssertTrue(f.error.contains("not available"))
+        }
+    }
+
+    func testSetSendUnknownTrackStillErrorsClearly() async throws {
+        let d = await daemon(oneStrip())
+        _ = try await d.axMixer.syncTracks()
+        do {
+            _ = try await SetSendTool(daemon: d).invoke([
+                "track": .string("nope"), "bus": .string("Aux 1"), "level": .int(90)])
+            XCTFail("expected a track-not-found ToolFailure")
+        } catch let f as ToolFailure {
+            XCTAssertEqual(f.layer, "ax")   // find() throws layer:"ax" for unknown track
+        }
+    }
 }

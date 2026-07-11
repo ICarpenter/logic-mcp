@@ -314,32 +314,36 @@ final class ToolTests: XCTestCase {
         XCTAssertEqual(state[10].automationMode, "latch")
     }
 
-    func testSetSendLevel() async throws {
+    func testSetSendReturnsNotAccessibleErrorAndTouchesNoMCUState() async throws {
+        // set_send's MCU implementation (.assignSend + blind V-Pot turn + LCD readback) is
+        // retired — it could write to whichever track Logic's assignment view happened to be
+        // following, not necessarily the one named here (the project's most dangerous bug
+        // class; see ax-findings.md §Sends). This replaces testSetSendLevel/testSetSendUnknownBus,
+        // which asserted the old MCU behavior (a successful echoed write, and a "no send cell
+        // matching 'Bus 9'" layer:"mcu" error) that no longer applies. Retains `fake` — same
+        // "FakeLogic [weak self]" gotcha as testSetVolumeDelta: discarding the tuple's third
+        // element would let ARC deallocate FakeLogic before the sends[1] assertion below.
         let (_, registry, fake) = await makeDaemonWithFakeLogic()
         let result = await registry.call(name: "set_send", arguments: [
             "track": .string("Vocal"), "bus": .string("Bus 2"), "level": .int(90),
         ])
-        XCTAssertNotEqual(result.isError, true)
+        XCTAssertEqual(result.isError, true)
         let json = try resultJSON(result)
-        XCTAssertEqual(json["level"] as? Int, 90)
+        XCTAssertEqual(json["layer"] as? String, "ax")
+        XCTAssertTrue((json["error"] as? String ?? "").contains("not available"))
+        // Prove the MCU hazard is actually gone: FakeLogic's send state must be untouched.
         let state = await fake.state
-        XCTAssertEqual(state[10].sends[1].level, 90)
+        XCTAssertEqual(state[10].sends[1].level, 0)
     }
 
-    func testSetSendUnknownBus() async throws {
-        // NOTE: retains `fake` (brief's literal test discarded it as `_`). Same
-        // "FakeLogic [weak self]" gotcha as testSetVolumeDelta: discarding the tuple's
-        // third element lets ARC deallocate FakeLogic once makeDaemonWithFakeLogic()
-        // returns, which would kill the mock's send page mid-test and make "Bus 9"
-        // absent for the wrong reason (dead mock, empty LCD) rather than because it's
-        // genuinely not one of the two configured sends.
+    func testSetSendUnknownTrackErrorsBeforeNotAccessible() async throws {
         let (_, registry, fake) = await makeDaemonWithFakeLogic()
         let result = await registry.call(name: "set_send", arguments: [
-            "track": .string("Vocal"), "bus": .string("Bus 9"), "level": .int(10),
+            "track": .string("Nonexistent"), "bus": .string("Bus 2"), "level": .int(10),
         ])
         XCTAssertEqual(result.isError, true)
         let json = try resultJSON(result)
-        XCTAssertEqual(json["layer"] as? String, "mcu")
+        XCTAssertEqual(json["layer"] as? String, "ax")   // AXBridge.find() error, not "not available"
         _ = fake
     }
 
@@ -570,16 +574,18 @@ final class ToolTests: XCTestCase {
     }
 
     func testSetSendAcceptsIntegralDoubleLevel() async throws {
-        // `level: 100.0` decodes to `.double(100.0)`; an integral double must be accepted.
+        // `level: 100.0` decodes to `.double(100.0)`; an integral double must still pass
+        // argument validation (layer:"daemon") rather than be rejected as non-numeric — it
+        // must reach the (now always-thrown) layer:"ax" not-available error, not bounce off
+        // 'level' coercion first. This retains the coercion regression coverage from the old
+        // MCU-era test without asserting the retired successful-write behavior.
         let (_, registry, fake) = await makeDaemonWithFakeLogic()
         let result = await registry.call(name: "set_send", arguments: [
             "track": .string("Vocal"), "bus": .string("Bus 2"), "level": .double(100.0),
         ])
-        XCTAssertNotEqual(result.isError, true, "integral double level must be accepted")
+        XCTAssertEqual(result.isError, true)
         let json = try resultJSON(result)
-        XCTAssertEqual(json["level"] as? Int, 100)
-        let state = await fake.state
-        XCTAssertEqual(state[10].sends[1].level, 100)
+        XCTAssertEqual(json["layer"] as? String, "ax", "integral double level must pass coercion and reach the not-available error, not a 'daemon' argument error")
         _ = fake
     }
 
