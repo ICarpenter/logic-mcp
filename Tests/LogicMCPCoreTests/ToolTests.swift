@@ -68,9 +68,11 @@ final class ToolTests: XCTestCase {
         return p
     }
 
-    func makeDaemonWithFakeLogic() async -> (daemon: Daemon, registry: ToolRegistry, fake: FakeLogic) {
+    func makeDaemonWithFakeLogic(
+        tracks: [FakeLogic.FakeTrack] = FakeLogic.standardSession()
+    ) async -> (daemon: Daemon, registry: ToolRegistry, fake: FakeLogic) {
         let (daemonEnd, logicEnd) = InMemoryWire.pair()
-        let fake = FakeLogic(wire: logicEnd, tracks: FakeLogic.standardSession())
+        let fake = FakeLogic(wire: logicEnd, tracks: tracks)
         let daemon = await Daemon(wire: daemonEnd, axProvider: Self.axProviderForStandardSession())
         await fake.start()
         let registry = ToolRegistry()
@@ -323,7 +325,16 @@ final class ToolTests: XCTestCase {
         // matching 'Bus 9'" layer:"mcu" error) that no longer applies. Retains `fake` — same
         // "FakeLogic [weak self]" gotcha as testSetVolumeDelta: discarding the tuple's third
         // element would let ARC deallocate FakeLogic before the sends[1] assertion below.
-        let (_, registry, fake) = await makeDaemonWithFakeLogic()
+        //
+        // Seed Vocal's Bus 2 send to a NONZERO value first: `standardSession()` seeds every
+        // send at 0, which is also what an untouched send reads as, so asserting `== 0` after
+        // the call is tautological — it would pass even if a regression let the old MCU write
+        // (level: 90) land on the wrong value, or even the wrong track's send. Seeding nonzero
+        // and asserting it is UNCHANGED is a real guard: only a genuine no-op survives it.
+        var tracks = FakeLogic.standardSession()
+        let seededLevel = 55
+        tracks[10].sends[1].level = seededLevel
+        let (_, registry, fake) = await makeDaemonWithFakeLogic(tracks: tracks)
         let result = await registry.call(name: "set_send", arguments: [
             "track": .string("Vocal"), "bus": .string("Bus 2"), "level": .int(90),
         ])
@@ -333,7 +344,7 @@ final class ToolTests: XCTestCase {
         XCTAssertTrue((json["error"] as? String ?? "").contains("not available"))
         // Prove the MCU hazard is actually gone: FakeLogic's send state must be untouched.
         let state = await fake.state
-        XCTAssertEqual(state[10].sends[1].level, 0)
+        XCTAssertEqual(state[10].sends[1].level, seededLevel)
     }
 
     func testSetSendUnknownTrackErrorsBeforeNotAccessible() async throws {

@@ -234,19 +234,24 @@ public struct SetPanTool: LogicTool {
             throw ToolFailure(error: "pan not settable via AX", layer: "ax",
                               expected: "a settable pan slider", observed: "read-only")
         }
+        // Undo baseline comes from the AX-observed value BEFORE the write, mirroring
+        // set_volume/setToggleAX (both capture prior-from-AX) — not the shadow model: if
+        // set_pan runs before any AX sync the model has no entry (undo baseline silently nil),
+        // and if the model is stale vs AX, undo would restore a stale value instead of what
+        // Logic actually had.
+        let priorRaw = await daemon.ax.value(of: pan).map { Int($0.rounded()) }
         // AX pan range is −64…63 (matches the tool's `position`); AXSetValue nudges ±1 per call
         // (ax-findings.md), so converge with nudgeToRaw. 128 steps covers the full range.
         let observedRaw = try await daemon.ax.nudgeToRaw(pan, target: Double(position), maxSteps: 128)
         let observed = Int(observedRaw.rounded())
         let name = await daemon.ax.read(strip).name
-        let priorPan = await daemon.model.snapshot.tracks.first { $0.name == name }?.pan
         if let idx = await daemon.model.indexOf(name) {
             await daemon.model.updateTrack(index: idx) { $0.pan = observed + 64 }
         }
         await daemon.journal.record(MixMutation(
             tool: "set_pan", track: name,
-            undoArguments: priorPan.map { ["track": name, "position": String($0 - 64)] },
-            descriptionText: "\(name) pan \(priorPan.map { String($0 - 64) } ?? "?") → \(observed)"))
+            undoArguments: priorRaw.map { ["track": name, "position": String($0)] },
+            descriptionText: "\(name) pan \(priorRaw.map { String($0) } ?? "?") → \(observed)"))
         return .object(["track": .string(name), "pan": .int(observed), "source": .string("ax")])
     }
 }

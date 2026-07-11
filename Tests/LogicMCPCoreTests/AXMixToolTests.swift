@@ -133,6 +133,24 @@ final class AXMixToolTests: XCTestCase {
         XCTAssertEqual(snap.tracks[0].pan, 34)   // -30 + 64
     }
 
+    /// Regression guard: `priorPan`/undo baseline must come from AX, not the shadow model.
+    /// Deliberately skips `syncTracks()` — the shadow model is empty, so the old
+    /// `daemon.model.snapshot`-derived baseline would have been nil (silently non-undoable)
+    /// even though `oneStrip()`'s AX pan slider has a perfectly readable starting value (0).
+    func testSetPanUndoBaselineComesFromAXWhenModelUnsynced() async throws {
+        let d = await daemon(oneStrip())
+        let result = try await SetPanTool(daemon: d).invoke(["track": .string("vox"), "position": .int(-30)])
+        guard case .object(let o) = result else { return XCTFail() }
+        XCTAssertEqual(o["pan"], .int(-30))
+        XCTAssertEqual(o["source"], .string("ax"))
+        let mutation = await d.journal.popLast(1).first
+        guard let undoArgs = mutation?.undoArguments else {
+            return XCTFail("undo baseline was nil — set_pan must read prior value from AX, not the (unsynced, empty) shadow model")
+        }
+        XCTAssertEqual(undoArgs["track"], "vox")
+        XCTAssertEqual(undoArgs["position"], "0")   // oneStrip()'s pan slider starts at AX value 0
+    }
+
     func testSetSendReturnsNotAccessibleError() async throws {
         let d = await daemon(oneStrip())
         _ = try await d.axMixer.syncTracks()
