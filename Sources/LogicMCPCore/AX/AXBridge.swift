@@ -108,4 +108,42 @@ public actor AXBridge {
         }
         return last
     }
+
+    /// Plugin slots on a strip are AXGroups (e.g. "Channel EQ", "RetroSyn") each with an
+    /// "open" child button (see Fixtures/ax/mixer_strip.txt). Returns them in tree order so
+    /// `slot` indexes them; the dedicated Channel EQ group is included like any other.
+    public func pluginGroups(_ strip: AXHandle) -> [(name: String, group: AXHandle)] {
+        p.children(of: strip).compactMap { g in
+            guard p.string(.role, of: g) == "AXGroup",
+                  let name = p.string(.description, of: g), !name.isEmpty,
+                  p.children(of: g).contains(where: { p.string(.description, of: $0) == "open" })
+            else { return nil }
+            return (name, g)
+        }
+    }
+    /// A plugin window is an AXWindow whose title is the TRACK name and which contains
+    /// parameter sliders (distinguishes it from the mixer window, also track-titled sometimes).
+    public func pluginWindow(track: String) -> AXHandle? {
+        p.windows().first {
+            (p.string(.title, of: $0) ?? "") == track
+                && descendant(of: $0, role: "AXSlider", description: nil) != nil
+                && descendant(of: $0, role: nil, description: "close") != nil
+        }
+    }
+    /// The plugin's parameter controls: settable AXSliders only, DEDUPED by description
+    /// (Logic exposes duplicates like "Gain" ×3 — keep the first settable slider per name).
+    public func paramControls(in window: AXHandle) -> [(name: String, handle: AXHandle)] {
+        var out: [(String, AXHandle)] = []
+        var seen = Set<String>()
+        func rec(_ x: AXHandle, _ d: Int) {
+            if d > 12 { return }
+            if p.string(.role, of: x) == "AXSlider", p.isSettable(x),
+               let name = p.string(.description, of: x), !name.isEmpty, !seen.contains(name) {
+                seen.insert(name); out.append((name, x))
+            }
+            for c in p.children(of: x) { rec(c, d + 1) }
+        }
+        rec(window, 0)
+        return out.map { (name: $0.0, handle: $0.1) }
+    }
 }

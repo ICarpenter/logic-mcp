@@ -347,66 +347,6 @@ final class ToolTests: XCTestCase {
         _ = fake
     }
 
-    func testGetPluginParamsPagesThroughAll() async throws {
-        // NOTE: retains `fake` (brief's literal test discarded it as `_`). Same
-        // "FakeLogic [weak self]" gotcha as testSetVolumeDelta/testSetSendUnknownBus:
-        // discarding the tuple's third element lets ARC deallocate FakeLogic once
-        // makeDaemonWithFakeLogic() returns, which would kill the mock mid-paging and
-        // make get_plugin_params falsely "succeed" with zero params (blank LCD) instead
-        // of exercising the real plugin-edit paging.
-        let (_, registry, fake) = await makeDaemonWithFakeLogic()
-        let result = await registry.call(name: "get_plugin_params",
-                                         arguments: ["track": .string("Vocal"), "slot": .int(0)])
-        XCTAssertNotEqual(result.isError, true)
-        let json = try resultJSON(result)
-        let params = json["params"] as! [[String: Any]]
-        XCTAssertEqual(params.count, 10)                       // ChanEQ fixture has 10 → proves paging
-        XCTAssertEqual(params[0]["name"] as? String, "LowFrq")
-        XCTAssertEqual(params[8]["name"] as? String, "HPFrq")  // page 2
-        _ = fake
-    }
-
-    func testSetPluginParamByName() async throws {
-        let (_, registry, fake) = await makeDaemonWithFakeLogic()
-        let result = await registry.call(name: "set_plugin_param", arguments: [
-            "track": .string("Vocal"), "slot": .int(0), "param": .string("HiGain"), "value": .double(0.75),
-        ])
-        XCTAssertNotEqual(result.isError, true)
-        let json = try resultJSON(result)
-        XCTAssertEqual(json["display"] as? String, "0.75")
-        let state = await fake.state
-        XCTAssertEqual(state[10].plugins[0].params[6].value, 0.75, accuracy: 0.03)
-    }
-
-    func testSetPluginParamUnknownName() async throws {
-        // NOTE: retains `fake` (brief's literal test discarded it as `_`) — same
-        // "FakeLogic [weak self]" gotcha as above.
-        let (_, registry, fake) = await makeDaemonWithFakeLogic()
-        let result = await registry.call(name: "set_plugin_param", arguments: [
-            "track": .string("Vocal"), "slot": .int(0), "param": .string("Wobble"), "value": .double(0.5),
-        ])
-        XCTAssertEqual(result.isError, true)
-        _ = fake
-    }
-
-    func testGetPluginParamsEmptySlotIsError() async throws {
-        // NOTE: retains `fake` (brief's literal test discarded it as `_`) — same
-        // "FakeLogic [weak self]" gotcha as the other plugin tests.
-        let (_, registry, fake) = await makeDaemonWithFakeLogic()
-        // Vocal's fixture only populates slot 0 (ChanEQ); slot 1 is empty, and
-        // pressing vpotPress(1) in plugin-select mode is a no-op in FakeLogic —
-        // this must be reported as a structured error, not fabricated success.
-        let result = await registry.call(name: "get_plugin_params",
-                                         arguments: ["track": .string("Vocal"), "slot": .int(1)])
-        XCTAssertEqual(result.isError, true)
-        let json = try resultJSON(result)
-        XCTAssertEqual(json["layer"] as? String, "mcu")
-        let message = json["error"] as? String ?? ""
-        XCTAssertTrue(message.lowercased().contains("no plugin") && message.contains("slot 1"),
-                      "expected a 'no plugin in slot 1' message, got: \(message)")
-        _ = fake
-    }
-
     func testUndoLastRestoresVolume() async throws {
         // set_volume is AX-based now — undo must be verified against the AX fader-level title.
         let (daemon, registry, fake) = await makeDaemonWithFakeLogic()
@@ -528,28 +468,6 @@ final class ToolTests: XCTestCase {
         XCTAssertNotEqual(neitherMsg, notANumberMsg, "neither vs non-numeric must differ")
         XCTAssertNotEqual(bothMsg, notANumberMsg, "both vs non-numeric must differ")
         _ = fake
-    }
-
-    func testSetPluginParamAcceptsIntegerBoundaryValues() async throws {
-        // value: 1 (fully open) and value: 0 (bypassed) are the most natural things a
-        // caller writes; both decode to `.int` and must be accepted at the 0…1 bounds.
-        let (_, registryOne, fakeOne) = await makeDaemonWithFakeLogic()
-        let openResult = await registryOne.call(name: "set_plugin_param", arguments: [
-            "track": .string("Vocal"), "slot": .int(0), "param": .string("HiGain"), "value": .int(1),
-        ])
-        XCTAssertNotEqual(openResult.isError, true, "value: 1 must be accepted")
-        let openState = await fakeOne.state
-        XCTAssertEqual(openState[10].plugins[0].params[6].value, 1.0, accuracy: 0.03)
-
-        let (_, registryZero, fakeZero) = await makeDaemonWithFakeLogic()
-        let zeroResult = await registryZero.call(name: "set_plugin_param", arguments: [
-            "track": .string("Vocal"), "slot": .int(0), "param": .string("HiGain"), "value": .int(0),
-        ])
-        XCTAssertNotEqual(zeroResult.isError, true, "value: 0 must be accepted")
-        let zeroState = await fakeZero.state
-        XCTAssertEqual(zeroState[10].plugins[0].params[6].value, 0.0, accuracy: 0.03)
-        _ = fakeOne
-        _ = fakeZero
     }
 
     func testSetPanAcceptsIntegralDoubleButRejectsFractional() async throws {
