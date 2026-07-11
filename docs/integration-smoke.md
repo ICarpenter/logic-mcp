@@ -31,6 +31,31 @@ Prereqs: Logic Pro open with a test project of ≥10 named tracks; daemon built
 
 Record outcomes in this file's log section with the Logic version.
 
+## Phase 2 (AX Mixer Core) — what changed for this checklist (run against branch `feat/ax-mixer-core`)
+
+The mixer tools now go through **Accessibility**, not MCU. Rebuild, reconnect `serve` (`/mcp`), open a
+clean Mixer window, and run the checklist with **Logic in the BACKGROUND** (another app frontmost) —
+verifying no-focus operation is now a first-class check, not just item 13. Updated expectations:
+
+- **Items 3–6, 10–11 (volume/pan/mute/solo/plugin):** now AX-sourced. `set_volume` returns exact dB
+  (`source:"ax"`), not a curve estimate. `get_plugin_params`/`set_plugin_param` are per-strip and safe
+  (the old wrong-track hazard is gone) — **run `get_plugin_params` 5× and confirm the SAME track/params
+  every time.**
+- **Item 7 (`set_send`):** now returns a structured `layer:"ax"` "not available via AX in this release"
+  error by design (sends aren't cleanly AX-settable yet). PASS = the structured error, not a working send.
+- **New AX-specific checks (from the whole-branch review — these are the residual risks):**
+  1. **Wrong-slot plugin:** open plugin A on a track in Logic's UI, then `get_plugin_params` for a
+     *different* slot on the same track → confirm it returns the requested slot, not A's params.
+  2. **Automation volume clobber:** `refresh_state`, note a track's `volumeDB`, `set_automation_mode` on it,
+     `refresh_state` again → does its `volumeDB` drift to a curve estimate?
+  3. **Mute-by-hand stale:** mute a track in Logic's UI, then `get_track` WITHOUT `refresh_state` → expect
+     it reports the stale value (`stale:false`) until `refresh_state`; decide if acceptable.
+  4. **Silence glyph:** drive a fader to −∞ and capture the exact `volume fader level` title string.
+  5. **Plugin display:** `get_plugin_params` on a Channel EQ → confirm `display` shows "0.0 dB"/"1000 Hz",
+     not raw engineering numbers.
+  6. **Convergence:** `set_volume` to several dB targets and `set_pan` full-range → lands within tolerance
+     without visibly slow/stepping behavior.
+
 ## Fader calibration (updates `FaderCurve.anchors`)
 1. `logic-mcp capture --out /tmp/sweep.jsonl` with the surface installed.
 2. In Logic, drag one fader slowly to each of: +6, +3, 0, −6, −12, −21, −30,
