@@ -121,4 +121,15 @@ final class AXMixToolTests: XCTestCase {
         XCTAssertEqual(db, -6.0, accuracy: 0.11)
         XCTAssertEqual(o["source"], .string("ax"))
     }
+
+    func testSetPanWritesAndReadsBack() async throws {
+        let d = await daemon(oneStrip())
+        _ = try await d.axMixer.syncTracks()
+        let result = try await SetPanTool(daemon: d).invoke(["track": .string("vox"), "position": .int(-30)])
+        guard case .object(let o) = result else { return XCTFail() }
+        XCTAssertEqual(o["pan"], .int(-30))
+        XCTAssertEqual(o["source"], .string("ax"))
+        let snap = await d.model.snapshot
+        XCTAssertEqual(snap.tracks[0].pan, 34)   // -30 + 64
+    }
 }

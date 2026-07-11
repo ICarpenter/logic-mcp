@@ -12,11 +12,6 @@ final class SyncEchoWire: MCUWire, @unchecked Sendable {
     private var continuations: [UUID: AsyncStream<[UInt8]>.Continuation] = [:]
     private var muteOn: [Int: Bool] = [:]
     private var ringDelivered: Set<Int> = []
-    /// When true, paint a normalized per-channel-pan VALUES bottom row on first subscription,
-    /// so `SetPanTool.normalizeSurface()` is a no-op and the test reaches the V-Pot sweep.
-    private let paintNormalized: Bool
-
-    init(paintNormalized: Bool = false) { self.paintNormalized = paintNormalized }
 
     func send(_ bytes: [UInt8]) async {
         guard let command = MCUCodec.decodeCommand(bytes) else { return }
@@ -47,10 +42,6 @@ final class SyncEchoWire: MCUWire, @unchecked Sendable {
             let id = UUID()
             lock.lock()
             continuations[id] = continuation
-            if paintNormalized {
-                let cell = "0".padding(toLength: 7, withPad: " ", startingAt: 0)
-                continuation.yield(MCUCodec.encode(.lcd(offset: 56, text: String(repeating: cell, count: 8))))
-            }
             lock.unlock()
             continuation.onTermination = { [weak self] _ in
                 guard let self else { return }
@@ -66,15 +57,6 @@ final class EventRaceTests: XCTestCase {
             throw ToolFailure(error: "no text", layer: "daemon")
         }
         return try JSONSerialization.jsonObject(with: Data(json.utf8)) as! [String: Any]
-    }
-
-    /// Wait until the session surface reports a per-channel pan VALUES bottom row (the wire's
-    /// initial paint has been applied), so set_pan's normalizeSurface will be a no-op.
-    private func waitForNormalized(_ session: MCUSession) async {
-        for _ in 0..<200 {
-            if SurfaceDisplay.isShowingValues(await session.surface.lcdBottom) { return }
-            try? await Task.sleep(for: .milliseconds(5))
-        }
     }
 
     // MARK: - The MCUSession contract this fix depends on
@@ -133,20 +115,13 @@ final class EventRaceTests: XCTestCase {
         }
     }
 
-    func testSetPanAlwaysCatchesSynchronousRingEcho() async throws {
-        for i in 0..<Self.iterations {
-            let wire = SyncEchoWire(paintNormalized: true)
-            let daemon = await Daemon(wire: wire, axProvider: FakeAXProvider(root: FakeAXNode(role: "AXApplication")))
-            await daemon.model.replaceTracks(["Snare"])   // avoid enumeration; index 0, channel 0
-            let registry = ToolRegistry()
-            await daemon.registerAllTools(in: registry)
-            await waitForNormalized(daemon.session)
-
-            let result = await registry.call(name: "set_pan",
-                                             arguments: ["track": .string("Snare"), "position": .int(-20)])
-            XCTAssertNotEqual(result.isError, true,
-                              "iteration \(i): set_pan must open its V-Pot ring subscription "
-                              + "BEFORE sweeping — a late subscriber misses the ring and fails")
-        }
-    }
+    // `set_pan` was re-homed onto AX (Task 7) and no longer opens an MCU event subscription,
+    // presses `.assignPan`, or turns a V-Pot at all — it converges an AX slider directly via
+    // `AXBridge.nudgeToRaw` and reads the slider back, never touching the MCU wire. There is
+    // no MCU ring-echo race left for it to exercise, and (unlike `setToggle` for mute/solo)
+    // there is no retained MCU pan-sweep free function to redirect this regression guard to,
+    // so `testSetPanAlwaysCatchesSynchronousRingEcho` — which asserted set_pan must subscribe
+    // to MCU events before turning the V-Pot — no longer has anything to guard and was removed,
+    // along with the `SyncEchoWire.paintNormalized`/`waitForNormalized` scaffolding it alone
+    // used.
 }

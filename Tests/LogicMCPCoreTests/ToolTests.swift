@@ -26,14 +26,16 @@ final class ToolTests: XCTestCase {
     }
 
     /// The re-homed query tools (`refresh_state`/`get_project_overview`/`get_track`) and the
-    /// re-homed `set_mute`/`set_solo`/`set_volume` now read/write via AX, never the MCU wire —
-    /// so the fake AX mixer must mirror `FakeLogic.standardSession()`'s names (same order) AND
-    /// carry mute/solo AXSwitch children plus a volume fader + fader-level title, or those
-    /// tools see an empty/wrong shadow model, find no control at all, or have no dB title to
-    /// converge on — even though `FakeLogic` (the MCU side) is fully populated.
+    /// re-homed `set_mute`/`set_solo`/`set_volume`/`set_pan` now read/write via AX, never the
+    /// MCU wire — so the fake AX mixer must mirror `FakeLogic.standardSession()`'s names (same
+    /// order) AND carry mute/solo AXSwitch children plus a volume fader + fader-level title
+    /// plus a pan slider, or those tools see an empty/wrong shadow model, find no control at
+    /// all, or have no dB title to converge on — even though `FakeLogic` (the MCU side) is
+    /// fully populated.
     static func axProviderForStandardSession() -> FakeAXProvider {
         // Every track's volume fader starts at raw 173 / 0.0 dB, mirroring FakeLogic's own
         // 12443-raw/0.0dB default so the two (independent) shadow states start in agreement.
+        // Pan starts centered (raw 0), matching FakeLogic's own 64-centered default (0 + 64).
         // NUDGE-MODE: models real Logic (AXSetValue moves ±1 toward target); the dB title is
         // recomputed from the resulting unit after every nudge — same shape as
         // AXMixToolTests.stripWithVolumeCurve().
@@ -43,13 +45,15 @@ final class ToolTests: XCTestCase {
                                    title: "volume fader level, 0.0 dB")
             let vol = FakeAXNode(role: "AXSlider", description: "volume fader", value: 173,
                                  settable: true, minValue: 0, maxValue: 233)
+            let pan = FakeAXNode(role: "AXSlider", description: "pan", value: 0,
+                                 settable: true, minValue: -64, maxValue: 63)
             volToLevel[ObjectIdentifier(vol)] = level
             return FakeAXNode(role: "AXLayoutItem", description: t.name, children: [
                 FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute",
                           stringValue: t.mute ? "on" : "off"),
                 FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "solo",
                           stringValue: t.solo ? "on" : "off"),
-                vol, level,
+                vol, level, pan,
             ])
         }
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: strips)
@@ -258,13 +262,20 @@ final class ToolTests: XCTestCase {
         _ = fake
     }
 
-    func testSetPanVerifiedByRing() async throws {
-        let (_, registry, fake) = await makeDaemonWithFakeLogic()
+    func testSetPanVerifiedByAX() async throws {
+        // set_pan is AX-based now (see MixTools.SetPanTool) — verify against the AX pan
+        // slider's raw value, not FakeLogic's MCU-side state, which this tool never touches.
+        let (daemon, registry, fake) = await makeDaemonWithFakeLogic()
         let result = await registry.call(name: "set_pan",
                                          arguments: ["track": .string("Keys"), "position": .int(-30)])
         XCTAssertNotEqual(result.isError, true)
-        let state = await fake.state
-        XCTAssertEqual(state[9].pan, 34)   // 64 + (-30)
+        let json = try resultJSON(result)
+        XCTAssertEqual(json["pan"] as? Int, -30)
+        XCTAssertEqual(json["source"] as? String, "ax")
+        let strip = try await daemon.ax.find("Keys")
+        let controls = await daemon.ax.read(strip)
+        XCTAssertEqual(controls.pan, -30)
+        _ = fake
     }
 
     func testGetTrackPanMatchesSetPan() async throws {
@@ -272,23 +283,26 @@ final class ToolTests: XCTestCase {
         // documented on testSetVolumeDelta: discarding the tuple's third element lets
         // ARC deallocate FakeLogic once makeDaemonWithFakeLogic() returns, which would
         // kill the mock before the set_pan round-trip completes.
-        let (_, registry, fake) = await makeDaemonWithFakeLogic()
+        let (daemon, registry, fake) = await makeDaemonWithFakeLogic()
         let setResult = await registry.call(name: "set_pan",
                                             arguments: ["track": .string("Keys"), "position": .int(-30)])
         XCTAssertNotEqual(setResult.isError, true)
         let setJSON = try resultJSON(setResult)
         XCTAssertEqual(setJSON["pan"] as? Int, -30)
 
-        // Model/FakeLogic ground truth is stored 0…127 (64 = center) — 34 is correct here.
-        let state = await fake.state
-        XCTAssertEqual(state[9].pan, 34)
+        // set_pan is AX-based now — the AX pan slider (not FakeLogic's MCU-side state,
+        // which this tool never touches) is the ground truth.
+        let strip = try await daemon.ax.find("Keys")
+        let controls = await daemon.ax.read(strip)
+        XCTAssertEqual(controls.pan, -30)
 
         // get_track must report pan on the same -64…63 public scale as set_pan, not
-        // the raw stored 0…127 value.
+        // the raw stored 0…127 shadow-model value.
         let getResult = await registry.call(name: "get_track", arguments: ["name": .string("Keys")])
         XCTAssertNotEqual(getResult.isError, true)
         let getJSON = try resultJSON(getResult)
         XCTAssertEqual(getJSON["pan"] as? Int, -30)
+        _ = fake
     }
 
     func testSetAutomationMode() async throws {
@@ -536,19 +550,22 @@ final class ToolTests: XCTestCase {
 
     func testSetPanAcceptsIntegralDoubleButRejectsFractional() async throws {
         // `position: -30.0` is an integral double and must be accepted; `position: 2.5`
-        // is fractional and must be REJECTED, never truncated to 2.
-        let (_, registry, fake) = await makeDaemonWithFakeLogic()
+        // is fractional and must be REJECTED, never truncated to 2. set_pan is AX-based
+        // now — verify against the AX pan slider, not FakeLogic's MCU-side state, which
+        // this tool never touches.
+        let (daemon, registry, fake) = await makeDaemonWithFakeLogic()
         let ok = await registry.call(name: "set_pan",
                                      arguments: ["track": .string("Keys"), "position": .double(-30.0)])
         XCTAssertNotEqual(ok.isError, true, "integral double position must be accepted")
-        var state = await fake.state
-        XCTAssertEqual(state[9].pan, 34)   // 64 + (-30)
+        let strip = try await daemon.ax.find("Keys")
+        var controls = await daemon.ax.read(strip)
+        XCTAssertEqual(controls.pan, -30)
 
         let rejected = await registry.call(name: "set_pan",
                                            arguments: ["track": .string("Keys"), "position": .double(2.5)])
         XCTAssertEqual(rejected.isError, true, "fractional position must be rejected, not truncated")
-        state = await fake.state
-        XCTAssertEqual(state[9].pan, 34, "pan must be unchanged after the rejected 2.5")
+        controls = await daemon.ax.read(strip)
+        XCTAssertEqual(controls.pan, -30, "pan must be unchanged after the rejected 2.5")
         _ = fake
     }
 

@@ -217,7 +217,7 @@ public struct SetSoloTool: LogicTool {
 
 public struct SetPanTool: LogicTool {
     public let name = "set_pan"
-    public let description = "Set pan position, -64 (hard left) … 0 (center) … +63 (hard right). Returns the signed pan Logic prints on its LCD ('source':'logic'); Logic may snap, so the result can differ from the request. Falls back to the requested value ('source':'requested') if the LCD cell is unreadable."
+    public let description = "Set pan position, -64 (hard left) … 0 (center) … +63 (hard right). Converges on the target by nudging the AX pan slider and re-reading it; returns the value actually achieved ('source':'ax')."
     public let inputSchema = trackArgSchema(["position": .object(["type": .string("integer")])], required: ["position"])
     let daemon: Daemon
     public func invoke(_ args: [String: Value]) async throws -> Value {
@@ -225,49 +225,29 @@ public struct SetPanTool: LogicTool {
         guard let position = args["position"]?.coercedInt, (-64...63).contains(position) else {
             throw ToolFailure(error: "'position' must be an integer in -64…63", layer: "daemon")
         }
-        let (track, channel) = try await resolveAndBank(daemon, track: trackName)
-        // Drive the surface to a KNOWN state (per-channel pan, values) instead of pressing
-        // `.assignPan` blind. `.assignPan` is a TOGGLE: an unconditional press flips Logic
-        // INTO the dead single-parameter page, where only V-Pot 0 is live and this channel's
-        // sweep would move nothing. normalizeSurface observes each axis and only presses when
-        // the observed state is wrong, leaving per-channel pan with values on the bottom row.
-        try await daemon.navigator.normalizeSurface()
-        // Pan over MCU is delta-only: sweep hard left (-127 ticks ≥ full range), then tick up.
-        await daemon.session.turnVPot(channel: channel, ticks: -127)
-        await daemon.session.turnVPot(channel: channel, ticks: position + 64)
-        // Let the V-Pot traffic go quiet, so the sweep has landed before we read it back and
-        // before a following tool call can interleave with a still-moving pan.
-        await daemon.session.settle(.milliseconds(150))
-
-        // Verify by READING Logic's own number, never by waiting for a V-Pot ring echo.
-        // Measured on real Logic: the two turn bursts arrive faster than Logic refreshes the
-        // ring, so it coalesces them — sweeping -47 → -64 → -47 leaves the ring exactly where
-        // it started and Logic emits NO echo at all. A ring-echo guard therefore reports
-        // failure in precisely the case where the pan is ALREADY at the requested value.
-        // The bottom LCD row always carries the landed pan as a signed integer, one cell per
-        // channel, and `normalizeSurface()` above guarantees that row is in VALUES mode.
-        let panCell = await daemon.session.surface.lcdCell(line: 1, channel: channel)
-        guard let observed = SurfaceDisplay.parsePan(panCell) else {
-            throw ToolFailure(
-                error: "pan not confirmed", layer: "mcu",
-                expected: "a signed pan value on the bottom LCD row for channel \(channel)",
-                observed: "unreadable cell '\(panCell.trimmingCharacters(in: .whitespaces))'"
-                    + " — does '\(track.name)' have a pan control?")
+        let strip = try await daemon.ax.find(trackName)
+        guard let pan = await daemon.ax.control(strip, description: "pan") else {
+            throw ToolFailure(error: "no pan control", layer: "ax",
+                              expected: "a pan slider on '\(trackName)'", observed: "none")
         }
-        let source = "logic"
-        let priorPan = track.pan
-        await daemon.model.updateTrack(index: track.index) { $0.pan = observed + 64 }
+        guard await daemon.ax.isSettable(pan) else {
+            throw ToolFailure(error: "pan not settable via AX", layer: "ax",
+                              expected: "a settable pan slider", observed: "read-only")
+        }
+        // AX pan range is −64…63 (matches the tool's `position`); AXSetValue nudges ±1 per call
+        // (ax-findings.md), so converge with nudgeToRaw. 128 steps covers the full range.
+        let observedRaw = try await daemon.ax.nudgeToRaw(pan, target: Double(position), maxSteps: 128)
+        let observed = Int(observedRaw.rounded())
+        let name = await daemon.ax.read(strip).name
+        let priorPan = await daemon.model.snapshot.tracks.first { $0.name == name }?.pan
+        if let idx = await daemon.model.indexOf(name) {
+            await daemon.model.updateTrack(index: idx) { $0.pan = observed + 64 }
+        }
         await daemon.journal.record(MixMutation(
-            tool: "set_pan", track: track.name,
-            undoArguments: priorPan.map { ["track": track.name, "position": String($0 - 64)] },
-            descriptionText: "\(track.name) pan \(priorPan.map { String($0 - 64) } ?? "?") → \(observed)"))
-        // The surface is left in the normalized state (per-channel pan, values) with track
-        // names back on the top row — nothing to clear, and the next enumeration reads names.
-        return .object([
-            "track": .string(track.name),
-            "pan": .int(observed),
-            "source": .string(source),
-        ])
+            tool: "set_pan", track: name,
+            undoArguments: priorPan.map { ["track": name, "position": String($0 - 64)] },
+            descriptionText: "\(name) pan \(priorPan.map { String($0 - 64) } ?? "?") → \(observed)"))
+        return .object(["track": .string(name), "pan": .int(observed), "source": .string("ax")])
     }
 }
 

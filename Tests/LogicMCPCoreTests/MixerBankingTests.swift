@@ -268,25 +268,30 @@ final class MixerBankingTests: XCTestCase {
         _ = fake
     }
 
-    // MARK: - fader targeting regression (item 5)
+    // MARK: - channel targeting regression (item 5)
 
-    /// Originally exercised via set_volume, which re-homed onto AX in a later task — AX
-    /// addresses strips by name and never banks the MCU surface at all, so the "wrong physical
-    /// channel" failure mode this test guards against can no longer occur through set_volume.
-    /// set_pan still runs the MCU `resolveAndBank` path, so it stands in as the regression
-    /// vehicle. The core offset/channel math is directly covered above by
+    /// Originally exercised via set_volume, then set_pan — both re-homed onto AX in later
+    /// tasks. AX addresses strips by name and never banks the MCU surface at all, so the
+    /// "wrong physical channel" failure mode this test guards against can no longer occur
+    /// through either tool. set_automation_mode is now the last mix tool still riding the MCU
+    /// `resolveAndBank` path (it selects the channel via `.select(channel:)` before pressing
+    /// the automation button — see FakeLogic.handlePress's `.select` case, which sets
+    /// `selected = bankOffset + ch`), so it stands in as the regression vehicle. The core
+    /// offset/channel math is directly covered above by
     /// testBankToShowTerminalWindowAndKeepsOffsetInSync; this is the end-to-end confirmation
-    /// that a real tool call lands on the right channel.
-    func testSetPanTargetsCorrectTrackInTerminalWindow() async throws {
+    /// that a real tool call selects and mutates the right physical channel in the clamped
+    /// terminal bank window (offset 12, channel 6 for index 18 of 20 — same window shape the
+    /// original set_pan test exercised).
+    func testSetAutomationModeTargetsCorrectTrackInTerminalWindow() async throws {
         let (daemon, registry, fake) = await makeDaemon(Self.tracks(20))
         _ = await registry.call(name: "refresh_state", arguments: ["scope": .string("tracks")])
-        let result = await registry.call(name: "set_pan",
-                                         arguments: ["track": .string("T18"), "position": .int(-30)])
+        let result = await registry.call(name: "set_automation_mode",
+                                         arguments: ["track": .string("T18"), "mode": .string("write")])
         XCTAssertNotEqual(result.isError, true)
         let state = await fake.state
-        XCTAssertEqual(state[18].pan, 34, "pan hit the wrong track")   // 64 + (-30)
-        XCTAssertEqual(state[17].pan, 64, "neighbor moved")
-        XCTAssertEqual(state[19].pan, 64, "neighbor moved")
+        XCTAssertEqual(state[18].automationMode, "write", "automation mode hit the wrong track")
+        XCTAssertEqual(state[17].automationMode, "read", "neighbor changed")
+        XCTAssertEqual(state[19].automationMode, "read", "neighbor changed")
         _ = daemon
         _ = fake
     }

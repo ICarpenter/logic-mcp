@@ -2,42 +2,15 @@ import XCTest
 import MCP
 @testable import LogicMCPCore
 
-/// End-to-end tests that `set_pan` returns Logic's OWN printed number (not the requested value),
-/// and that a parameter/banner view left on the LCD can never be read as track names by
-/// `enumerateTracks`. (`set_volume` was MCU/banner-sourced when this file was written; it is
-/// AX-based now — see `AXMixToolTests` for its convergence coverage.)
+/// End-to-end tests that a parameter/banner view left on the LCD can never be read as track
+/// names by `enumerateTracks`. (`set_volume` and `set_pan` were MCU/banner-sourced when this
+/// file was written; both are AX-based now — see `AXMixToolTests` for their convergence
+/// coverage. `set_automation_mode` is the only mix tool still MCU-sourced.) These tests drive
+/// the MCU surface directly (`nav.enumerateTracks()`/`session.moveFader`), never through a
+/// tool, so they need no AX fixture at all.
 final class SurfaceReadbackTests: XCTestCase {
     static func tracks(_ n: Int) -> [FakeLogic.FakeTrack] {
         (0..<n).map { FakeLogic.FakeTrack(name: String(format: "T%02d", $0)) }
-    }
-
-    /// A minimal AX mixer mirroring `tracks`' names — these tests exercise `set_pan`, an
-    /// MCU-sourced tool (goes through `MixerNavigator`, never AX), but `refresh_state`
-    /// is now AX-only, so a call to it needs a non-empty mixer to read.
-    private static func axProvider(for tracks: [FakeLogic.FakeTrack]) -> FakeAXProvider {
-        let strips = tracks.map { FakeAXNode(role: "AXLayoutItem", description: $0.name) }
-        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: strips)
-        let window = FakeAXNode(role: "AXWindow", children: [area])
-        return FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
-    }
-
-    /// Daemon + registry over a fake whose LCD-display behaviour is tunable. Retains the fake.
-    private func makeDaemon(_ tracks: [FakeLogic.FakeTrack],
-                            bannerLifetime: Duration = .milliseconds(200),
-                            ringEchoes: Bool = true,
-                            panSnap: (@Sendable (Int) -> Int)? = nil)
-        async -> (daemon: Daemon, registry: ToolRegistry, fake: FakeLogic) {
-        let (daemonEnd, logicEnd) = InMemoryWire.pair()
-        let fake = FakeLogic(wire: logicEnd, tracks: tracks,
-                             bannerLifetime: bannerLifetime, ringEchoes: ringEchoes, panSnap: panSnap)
-        let daemon = await Daemon(wire: daemonEnd, axProvider: Self.axProvider(for: tracks))
-        await fake.start()
-        let registry = ToolRegistry()
-        await daemon.registerAllTools(in: registry)
-        _ = await daemon.session.waitFor(timeout: .seconds(2)) {
-            if case .lcd = $0 { return true } else { return false }
-        }
-        return (daemon, registry, fake)
     }
 
     /// Session + navigator over a fake, with a SHORT banner timeout so recovery tests are
@@ -60,83 +33,12 @@ final class SurfaceReadbackTests: XCTestCase {
         return (session, nav, fake)
     }
 
-    private func resultJSON(_ result: CallTool.Result) throws -> [String: Any] {
-        guard case .text(let json, _, _)? = result.content.first else {
-            throw ToolFailure(error: "no text", layer: "daemon")
-        }
-        return try JSONSerialization.jsonObject(with: Data(json.utf8)) as! [String: Any]
-    }
-
-    // MARK: - set_pan returns the OBSERVED pan, not the requested one
-
-    func testSetPanReturnsObservedPanNotRequested() async throws {
-        // Logic snaps: it lands 5 higher (signed) than commanded. The tool must return what
-        // the LCD shows (-25), never the requested -30.
-        let (_, registry, fake) = await makeDaemon(Self.tracks(4), panSnap: { $0 + 5 })
-        _ = await registry.call(name: "refresh_state", arguments: ["scope": .string("tracks")])
-        let result = await registry.call(name: "set_pan",
-                                         arguments: ["track": .string("T01"), "position": .int(-30)])
-        XCTAssertNotEqual(result.isError, true)
-        let json = try resultJSON(result)
-        XCTAssertEqual(json["pan"] as? Int, -25, "must return Logic's observed pan, not the request")
-        XCTAssertEqual(json["source"] as? String, "logic")
-
-        // The shadow model must also hold the observed pan.
-        let get = await registry.call(name: "get_track", arguments: ["name": .string("T01")])
-        XCTAssertEqual(try resultJSON(get)["pan"] as? Int, -25)
-        _ = fake
-    }
-
-    func testSetPanWorksOnTwoConsecutiveCalls() async throws {
-        // The old bug pressed .assignPan unconditionally, TOGGLING per-channel pan on and off,
-        // so the tool alternated between working and moving nothing on a non-zero channel.
-        // normalizeSurface keeps the surface in per-channel pan, so back-to-back calls land.
-        let (_, registry, fake) = await makeDaemon(Self.tracks(4))
-        _ = await registry.call(name: "refresh_state", arguments: ["scope": .string("tracks")])
-
-        let first = await registry.call(name: "set_pan",
-                                        arguments: ["track": .string("T02"), "position": .int(-20)])
-        XCTAssertNotEqual(first.isError, true)
-        XCTAssertEqual(try resultJSON(first)["pan"] as? Int, -20)
-        XCTAssertEqual(try resultJSON(first)["source"] as? String, "logic")
-
-        let second = await registry.call(name: "set_pan",
-                                         arguments: ["track": .string("T02"), "position": .int(40)])
-        XCTAssertNotEqual(second.isError, true, "the second consecutive call must also land")
-        XCTAssertEqual(try resultJSON(second)["pan"] as? Int, 40)
-        XCTAssertEqual(try resultJSON(second)["source"] as? String, "logic")
-
-        let state = await fake.state
-        XCTAssertEqual(state[2].pan, 104)   // 64 + 40, T02 is channel 2 (non-zero)
-        _ = fake
-    }
-
-    func testSetPanSucceedsWhenLogicEmitsNoRingEcho() async throws {
-        // Measured on real Logic: the two turn bursts arrive faster than the LED ring
-        // refreshes, so Logic coalesces them. Sweeping -47 → -64 → -47 leaves the ring where
-        // it started and Logic emits NO ring echo — which happens precisely when the pan is
-        // ALREADY at the requested value. The old code waited on that echo and reported
-        // "pan not confirmed" for a move that was already correct. Verification must come
-        // from the pan Logic PRINTS, never from a ring echo.
-        let (_, registry, fake) = await makeDaemon(Self.tracks(4), ringEchoes: false)
-        _ = await registry.call(name: "refresh_state", arguments: ["scope": .string("tracks")])
-
-        let result = await registry.call(name: "set_pan",
-                                         arguments: ["track": .string("T02"), "position": .int(-47)])
-        XCTAssertNotEqual(result.isError, true, "no ring echo must NOT mean 'pan not confirmed'")
-        XCTAssertEqual(try resultJSON(result)["pan"] as? Int, -47)
-        XCTAssertEqual(try resultJSON(result)["source"] as? String, "logic")
-
-        // Ask for the value it already holds — the real-world no-echo case.
-        let again = await registry.call(name: "set_pan",
-                                        arguments: ["track": .string("T02"), "position": .int(-47)])
-        XCTAssertNotEqual(again.isError, true, "re-requesting the current pan must still succeed")
-        XCTAssertEqual(try resultJSON(again)["pan"] as? Int, -47)
-
-        let state = await fake.state
-        XCTAssertEqual(state[2].pan, 17)   // 64 + (-47)
-        _ = fake
-    }
+    // `set_pan` was re-homed onto AX (Task 7): it no longer sweeps a V-Pot, reads the LCD, or
+    // can be made to "snap" relative to the request, so the three tests that used to live here
+    // (observed-vs-requested snap, back-to-back calls surviving the `.assignPan` toggle bug,
+    // and surviving a coalesced/missing ring echo) no longer have an MCU pan path to guard.
+    // Direct-write + read-back convergence coverage for AX pan lives in
+    // `AXMixToolTests.testSetPanWritesAndReadsBack`.
 
     // MARK: - the display-state hazard: enumeration must never read a banner/param view
 
