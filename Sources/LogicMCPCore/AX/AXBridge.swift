@@ -130,6 +130,23 @@ public actor AXBridge {
                 && descendant(of: $0, role: nil, description: "close") != nil
         }
     }
+
+    /// Close every currently-open plugin window for `track`, so a following open deterministically
+    /// lands on the REQUESTED slot instead of reusing whatever window happens to already be up.
+    /// `pluginWindow(track:)` matches only on window TITLE == track name, so with more than one
+    /// slot's window open (e.g. slot 0's window left open from an earlier call), it can return the
+    /// wrong slot's params — confirmed live (`get_plugin_params(slot:1)` returned slot 0's Channel
+    /// EQ). Loops because more than one window can be open on the same track; capped at 8 to avoid
+    /// spinning forever if a window won't close. A brief pause after each press lets the AX tree
+    /// settle before the next lookup.
+    public func closePluginWindows(track: String) async {
+        for _ in 0..<8 {
+            guard let window = pluginWindow(track: track) else { return }
+            guard let closeBtn = descendant(of: window, role: "AXButton", description: "close") else { return }
+            try? press(closeBtn)
+            try? await Task.sleep(for: .milliseconds(30))
+        }
+    }
     /// The plugin's parameter controls: settable AXSliders only, DEDUPED by description
     /// (Logic exposes duplicates like "Gain" ×3 — keep the first settable slider per name).
     public func paramControls(in window: AXHandle) -> [(name: String, handle: AXHandle)] {

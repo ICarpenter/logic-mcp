@@ -110,10 +110,14 @@ func axEnterPlugin(_ daemon: Daemon, trackName: String, slot: Int) async throws
                           expected: "one of \(groups.count) plugin slots: \(groups.map(\.name).joined(separator: ", "))",
                           observed: "slot \(slot) out of range")
     }
-    // Open ONLY if the plugin window isn't already up — the "open" button toggles, so pressing
-    // it on an already-open window would CLOSE it.
-    if await daemon.ax.pluginWindow(track: name) == nil,
-       let openBtn = await daemon.ax.descendant(of: groups[slot].group, role: "AXButton", description: "open") {
+    // Close every plugin window already open for this track FIRST, then deterministically open
+    // the REQUESTED slot. `pluginWindow(track:)` matches only on window TITLE == track name, so
+    // leaving another slot's window open (e.g. from a prior get_plugin_params call) made this
+    // return the WRONG slot's params — confirmed live: get_plugin_params(slot:1) returned slot
+    // 0's Channel EQ because slot 0's window was still up. Unconditional close-then-open removes
+    // the ambiguity: after this, at most one plugin window for `name` can exist.
+    await daemon.ax.closePluginWindows(track: name)
+    if let openBtn = await daemon.ax.descendant(of: groups[slot].group, role: "AXButton", description: "open") {
         try? await daemon.ax.press(openBtn)
     }
     guard let window = await daemon.ax.pluginWindow(track: name) else {

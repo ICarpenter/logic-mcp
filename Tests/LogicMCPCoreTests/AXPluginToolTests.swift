@@ -30,6 +30,59 @@ final class AXPluginToolTests: XCTestCase {
         return p
     }
 
+    /// Regression guard for the real-Logic smoke bug: `axEnterPlugin` used to open a slot's
+    /// plugin window only if NO plugin window for the track was already up, so with slot 0's
+    /// window left open, `get_plugin_params(slot:1)` silently reused it and returned slot 0's
+    /// params. Models two slots whose windows are both titled by the TRACK name (as real Logic
+    /// does) and only materialize on an "open" press; the fix must close slot 0's window before
+    /// opening slot 1's, so slot 1's params are the ones returned.
+    func testGetPluginParamsSlot1DoesNotReturnSlot0() async throws {
+        let eqGain = FakeAXNode(role: "AXSlider", description: "Gain", title: "0.0 dB",
+                                value: 240, settable: true, minValue: 0, maxValue: 480)
+        let eqClose = FakeAXNode(role: "AXButton", description: "close")
+        let eqWindow = FakeAXNode(role: "AXWindow", title: "vox", children: [eqClose, eqGain])
+        eqClose.closesWindow = eqWindow
+
+        let compThreshold = FakeAXNode(role: "AXSlider", description: "Threshold", title: "-20 dB",
+                                       value: 100, settable: true, minValue: 0, maxValue: 200)
+        let compClose = FakeAXNode(role: "AXButton", description: "close")
+        let compWindow = FakeAXNode(role: "AXWindow", title: "vox", children: [compClose, compThreshold])
+        compClose.closesWindow = compWindow
+
+        let eqOpen = FakeAXNode(role: "AXButton", description: "open")
+        eqOpen.opensWindow = eqWindow
+        let eqGroup = FakeAXNode(role: "AXGroup", description: "Channel EQ", children: [eqOpen])
+
+        let compOpen = FakeAXNode(role: "AXButton", description: "open")
+        compOpen.opensWindow = compWindow
+        let compGroup = FakeAXNode(role: "AXGroup", description: "Compressor", children: [compOpen])
+
+        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
+            FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute", stringValue: "off"),
+            eqGroup, compGroup,
+        ])
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
+        // No plugin window pre-present — both must be opened on demand, mirroring real Logic
+        // (unlike `makeProvider()` below, which pre-opens slot 0's window for Task 10's
+        // untested "cold start" branch).
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication",
+            children: [FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer", children: [area])]))
+        p.nudgeMode = true
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        _ = try await d.axMixer.syncTracks()
+
+        let r0 = try await GetPluginParamsTool(daemon: d).invoke(["track": .string("vox"), "slot": .int(0)])
+        guard case .object(let o0) = r0, case .array(let params0)? = o0["params"], case .object(let p0)? = params0.first
+        else { return XCTFail() }
+        XCTAssertEqual(p0["name"], .string("Gain"))
+
+        // Slot 0's window is still "open" in Logic's UI at this point — the bug reused it here.
+        let r1 = try await GetPluginParamsTool(daemon: d).invoke(["track": .string("vox"), "slot": .int(1)])
+        guard case .object(let o1) = r1, case .array(let params1)? = o1["params"], case .object(let p1)? = params1.first
+        else { return XCTFail() }
+        XCTAssertEqual(p1["name"], .string("Threshold"), "slot 1 must return its OWN params, not slot 0's stale Gain")
+    }
+
     func testGetPluginParamsListsNames() async throws {
         let d = await Daemon(wire: InMemoryWire(), axProvider: makeProvider())
         _ = try await d.axMixer.syncTracks()

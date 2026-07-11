@@ -1,3 +1,4 @@
+import Foundation
 import MCP
 
 /// Resolve a track by name and bank the MCU window to show it. Every mix tool starts here.
@@ -170,7 +171,16 @@ func setToggleAX(_ daemon: Daemon, trackName: String, on: Bool, isMute: Bool) as
     let current = await daemon.ax.stringValue(.value, of: button) == "on"
     if current != on {
         try await daemon.ax.press(button)
-        let after = await daemon.ax.stringValue(.value, of: button) == "on"
+        // AXPress updates the switch's value ASYNCHRONOUSLY on real Logic — an immediate
+        // re-read returns the stale pre-press value. Poll until the value catches up or a
+        // 1s deadline passes, instead of trusting a single read.
+        var after = current
+        let deadline = ContinuousClock.now + .seconds(1)
+        while ContinuousClock.now < deadline {
+            after = await daemon.ax.stringValue(.value, of: button) == "on"
+            if after == on { break }
+            try? await Task.sleep(for: .milliseconds(30))
+        }
         guard after == on else {
             throw ToolFailure(error: "\(label) not confirmed", layer: "ax",
                               expected: "\(label) \(on)", observed: "\(after)")

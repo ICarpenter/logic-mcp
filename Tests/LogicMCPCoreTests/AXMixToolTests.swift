@@ -31,6 +31,31 @@ final class AXMixToolTests: XCTestCase {
         XCTAssertEqual(snap.tracks[0].mute, true)
     }
 
+    /// Models Logic's ASYNCHRONOUS AXSwitch update (real-Logic smoke bug): `AXPress` flips the
+    /// switch, but the new value isn't visible on `.value` reads until a few reads later.
+    /// `pressLatency = 3` holds the flipped value back for 3 reads. A single-read confirm (the
+    /// pre-fix implementation) would see the stale "off" and throw "mute not confirmed"; the
+    /// poll in `setToggleAX` must wait it out and succeed.
+    func testSetMuteConfirmsThroughPressLatency() async throws {
+        let mute = FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute", stringValue: "off")
+        mute.pressLatency = 3
+        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
+            mute,
+            FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "solo", stringValue: "off"),
+        ])
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication",
+                              children: [FakeAXNode(role: "AXWindow", children: [area])]))
+        p.nudgeMode = true
+        let d = await daemon(p)
+        _ = try await d.axMixer.syncTracks()
+        let result = try await SetMuteTool(daemon: d).invoke(["track": .string("vox"), "on": .bool(true)])
+        guard case .object(let o) = result else { return XCTFail() }
+        XCTAssertEqual(o["mute"], .bool(true))
+        let snap = await d.model.snapshot
+        XCTAssertEqual(snap.tracks[0].mute, true)
+    }
+
     func testMuteIdempotentWhenAlreadyOn() async throws {
         let d = await daemon(oneStrip(mute: "on"))
         _ = try await d.axMixer.syncTracks()

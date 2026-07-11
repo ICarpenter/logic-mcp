@@ -15,15 +15,56 @@ final class FakeAXNode {
     var children: [FakeAXNode]
     let minValue: Double?
     let maxValue: Double?
+    /// Models Logic's ASYNCHRONOUS AXSwitch value update: the number of `.value` string reads
+    /// that must occur AFTER a press before the flipped value becomes visible. When a press
+    /// lands on a node with `pressLatency > 0`, the flip is held in `pendingStringValue` and
+    /// this countdown decrements on each `.value` read; the new value is only returned once it
+    /// hits 0. Zero (the default) is synchronous — a press's new value is visible immediately,
+    /// unchanged from prior behavior.
+    var pressLatency = 0
+    private var pendingStringValue: String?
+    private var latencyCountdown = 0
+    /// Test-only window-open/close wiring: set on an "open" button so a press adds this window
+    /// to the tree (simulating Logic opening a plugin), or on a "close" button so a press
+    /// removes it. Both nil (the default) preserves the old no-op press behavior for every
+    /// other test — only tests that model a slot's window appearing/disappearing set these.
+    var opensWindow: FakeAXNode?
+    var closesWindow: FakeAXNode?
 
     init(role: String, subrole: String? = nil, description: String? = nil,
          title: String? = nil, stringValue: String? = nil, value: Double? = nil,
          settable: Bool = false, children: [FakeAXNode] = [],
-         minValue: Double? = nil, maxValue: Double? = nil) {
+         minValue: Double? = nil, maxValue: Double? = nil, pressLatency: Int = 0) {
         self.role = role; self.subrole = subrole; self.description = description
         self.title = title; self.stringValue = stringValue; self.numberValue = value
         self.settable = settable; self.children = children
         self.minValue = minValue; self.maxValue = maxValue
+        self.pressLatency = pressLatency
+    }
+
+    /// Called by the provider's `.value` string read. If a press is pending latency, decrements
+    /// the countdown and only reveals the flipped value once it reaches 0.
+    func readValueForLatency() -> String? {
+        guard let pending = pendingStringValue else { return stringValue }
+        if latencyCountdown > 0 {
+            latencyCountdown -= 1
+            return stringValue   // still stale
+        }
+        stringValue = pending
+        pendingStringValue = nil
+        return stringValue
+    }
+
+    /// Called by the provider's `.press` action on an AXSwitch. Computes the flipped value and,
+    /// if `pressLatency > 0`, holds it pending instead of publishing it immediately.
+    func flipSwitchValue() {
+        let flipped = (stringValue == "on") ? "off" : "on"
+        if pressLatency > 0 {
+            pendingStringValue = flipped
+            latencyCountdown = pressLatency
+        } else {
+            stringValue = flipped
+        }
     }
 }
 
@@ -63,7 +104,7 @@ final class FakeAXProvider: AXProvider, @unchecked Sendable {
         case .description: return n.description
         case .title: return n.title
         case .help: return nil
-        case .value: return n.stringValue ?? n.numberValue.map { String($0) }
+        case .value: return n.readValueForLatency() ?? n.numberValue.map { String($0) }
         }
     }
     func number(of h: AXHandle) -> Double? { node(h)?.numberValue }
@@ -86,10 +127,19 @@ final class FakeAXProvider: AXProvider, @unchecked Sendable {
         guard let n = node(h) else { throw AXUnavailable() }
         switch action {
         case .press where n.subrole == "AXSwitch":
-            n.stringValue = (n.stringValue == "on") ? "off" : "on"
+            n.flipSwitchValue()
         case .increment: n.numberValue = (n.numberValue ?? 0) + 10
         case .decrement: n.numberValue = (n.numberValue ?? 0) - 10
-        case .press: break
+        case .press:
+            // Simulate a plugin window opening/closing (Bug 2 regression coverage). Both are
+            // nil in every other test, so this is a no-op there — unchanged prior behavior.
+            if let opens = n.opensWindow, !rootNode.children.contains(where: { $0 === opens }) {
+                rootNode.children.append(opens)
+                index(opens)
+            }
+            if let closes = n.closesWindow {
+                rootNode.children.removeAll { $0 === closes }
+            }
         }
     }
 }
