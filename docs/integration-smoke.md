@@ -75,7 +75,22 @@ FakeLogic to match the transcript and re-run the suite.
 ## Log
 | Date | Logic version | Result | Notes |
 |------|---------------|--------|-------|
+| 2026-07-11 | 12.3 (mcp_test, 20 strips) | AX smoke PASS (3 bugs found+fixed live) | Ran via `logic-mcp smoke` (drives the real AX tools, Logic backgrounded). See detail below. |
 | 2026-07-09 | (mcp_test, 20 strips) | 9 pass / 3 fail / 1 caveat | Items 1-6, 8, 9, 13 pass. 7 + 10 + 11 FAIL (assignment-view race). 12 passes once, then acts as redo. |
+
+### 2026-07-11 AX Mixer Core smoke detail (Logic 12.3, branch `feat/ax-mixer-core`)
+Driven by the new `logic-mcp smoke` subcommand (real `Daemon` + `SystemAXProvider`, Logic in the background the whole time).
+- **NO-FOCUS CONFIRMED** — frontmost stayed iTerm2 before/after; Logic never came forward through every read and write. This is the phase's central thesis, proven on real Logic.
+- **refresh_state** — all 20 tracks, FULL untruncated names, real dB, pan, and output routing; `pedla steel 5` correctly at pan 30. (MCU truncation + bank geometry gone.)
+- **set_volume** `db:-6`→-6.0, `delta:+2`→-4.0, restore→within 0.1 dB (curve-free dB-title convergence).
+- **set_pan** `-30`→-30 exact. **set_mute** on/off + idempotent, confirmed.
+- **set_send** → structured "not available via AX" error (by design; sends retired from the wrong-track MCU path, deferred).
+- **get_plugin_params** → all 25 real Channel EQ params; SAME track/params on repeat (no wrong-*track* hazard).
+- **Three bugs found by the smoke (fake couldn't catch) and FIXED + re-verified live:**
+  1. `set_mute`/`set_solo` "not confirmed" — `AXPress` updates the value async; immediate re-read was stale. Fixed with a poll-after-press.
+  2. Wrong-SLOT plugin — `get_plugin_params(slot:1)` returned slot 0's already-open EQ window. Fixed by closing open plugin windows for the track before opening the requested slot.
+  3. Volume convergence bailed ~1 dB short — the stuck-detection trusted an immediate post-nudge read (same async lag). Fixed with a settle-poll before declaring "stuck".
+- **Known limitations still open** (see HANDOFF.md): plugin `display` shows raw engineering values ("240.0") not "0.0 dB"; slot 1 (an instrument, RetroSyn) returns "parameters not accessible" (effects vs instruments — confirm intended); `set_automation_mode` volume-clobber and stale-read-after-hand-edit not yet re-checked in this run.
 
 ### 2026-07-09 run detail
 - **1 ping** pass. **2 refresh_state** pass (20 names, correct order, after the bank-clamp fix).
