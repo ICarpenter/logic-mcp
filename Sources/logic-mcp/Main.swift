@@ -8,7 +8,7 @@ struct LogicMCP: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "logic-mcp",
         abstract: "MCP server giving agents end-to-end control of Logic Pro.",
-        subcommands: [Serve.self, Capture.self, Probe.self, Calibrate.self, LCDProbe.self, AXDump.self],
+        subcommands: [Serve.self, Capture.self, Probe.self, Calibrate.self, LCDProbe.self, AXDump.self, Smoke.self],
         defaultSubcommand: Serve.self
     )
 }
