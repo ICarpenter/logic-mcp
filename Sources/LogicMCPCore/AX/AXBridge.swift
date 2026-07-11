@@ -94,16 +94,39 @@ public actor AXBridge {
     }
     public func minMax(of h: AXHandle) -> (Double?, Double?) { p.minMax(of: h) }
 
+    /// Re-reads `h`'s numeric AX value; if it comes back equal to `prior` (looks like no
+    /// movement happened), don't trust that on the first read — poll briefly instead.
+    /// `AXUIElementSetAttributeValue` updates a slider's value ASYNCHRONOUSLY on real Logic: an
+    /// immediate re-read right after a write can return the STALE pre-write value, which is
+    /// indistinguishable from a genuine "stuck at a boundary" without this confirmation step
+    /// (real-Logic smoke: `set_volume db:-0.2` converged from -4.1 and bailed at -1.1 dB because
+    /// a post-nudge read came back stale and looked stuck). Polls every 30ms for up to ~200ms;
+    /// if the value still hasn't changed from `prior` by then, it's genuinely stuck. Shared by
+    /// `nudgeToRaw` below and `axConvergeVolume` (MixTools.swift) so both stuck-detections use
+    /// the same settle-confirmed read. The extra latency is only paid when a nudge already LOOKS
+    /// stuck (rare) — a normal converging nudge returns on the first read, same cost as before.
+    public func settledValue(of h: AXHandle, unlessChangedFrom prior: Double?) async -> Double? {
+        var now = p.number(of: h)
+        if now != prior { return now }
+        let deadline = ContinuousClock.now + .milliseconds(200)
+        while ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(30))
+            now = p.number(of: h)
+            if now != prior { return now }
+        }
+        return now   // unchanged even after the settle window ⇒ genuinely stuck
+    }
+
     /// Converge a slider on `target` by repeated nudging. AXSetValue on Logic sliders moves
     /// ONE unit toward the target per call (see ax-findings.md), so this loops until the
     /// read-back reaches `target` or stops progressing. Returns the achieved raw value.
-    public func nudgeToRaw(_ h: AXHandle, target: Double, maxSteps: Int) throws -> Double {
+    public func nudgeToRaw(_ h: AXHandle, target: Double, maxSteps: Int) async throws -> Double {
         var last = p.number(of: h) ?? 0
         if last == target { return last }
         for _ in 0..<maxSteps {
             try p.setNumber(target, of: h)          // moves 1 toward target
-            let now = p.number(of: h) ?? last
-            if now == target || now == last { return now }   // reached, or stuck at a boundary
+            let now = await settledValue(of: h, unlessChangedFrom: last) ?? last
+            if now == target || now == last { return now }   // reached, or settle-confirmed stuck
             last = now
         }
         return last

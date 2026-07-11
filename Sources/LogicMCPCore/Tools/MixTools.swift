@@ -117,8 +117,12 @@ func axConvergeVolume(_ daemon: Daemon, strip: AXHandle, slider: AXHandle, targe
         if let cur = lvl.db, abs(cur - targetDB) <= 0.1 { return cur }
         let dirDB = lvl.db ?? -Double.infinity                      // silent ⇒ climb toward hi
         try await daemon.ax.setValue(dirDB < targetDB ? hi : lo, of: slider)
-        let nowRaw = await daemon.ax.value(of: slider)
-        if nowRaw == lastRaw { return (await level())?.db }         // raw didn't move ⇒ at a boundary
+        // Don't trust a single immediate post-nudge read as "stuck": AXSetValue updates the
+        // slider's raw value ASYNCHRONOUSLY on real Logic, so an immediate re-read can return
+        // the stale pre-nudge value and falsely look like a boundary (real-Logic smoke bug —
+        // see AXBridge.settledValue). Only bail once the settle-poll confirms it really didn't move.
+        let nowRaw = await daemon.ax.settledValue(of: slider, unlessChangedFrom: lastRaw)
+        if nowRaw == lastRaw { return (await level())?.db }         // still unchanged after settling ⇒ at a boundary
         lastRaw = nowRaw
     }
     return (await level())?.db

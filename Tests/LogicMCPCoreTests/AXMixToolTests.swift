@@ -147,6 +147,77 @@ final class AXMixToolTests: XCTestCase {
         XCTAssertEqual(o["source"], .string("ax"))
     }
 
+    /// A pan slider whose raw `.value` read lags `setValueLatency` reads behind every
+    /// `setNumber` — models the THIRD async-read race (real-Logic smoke, `feat/ax-mixer-core`):
+    /// `AXUIElementSetAttributeValue` updates a slider's raw value ASYNCHRONOUSLY on real Logic,
+    /// so an immediate post-nudge read can return the STALE pre-nudge value, indistinguishable
+    /// from "stuck at a boundary" to a single-read stuck-check.
+    func stripWithLaggyPan(latency: Int) -> FakeAXProvider {
+        let pan = FakeAXNode(role: "AXSlider", description: "pan", value: 0, settable: true,
+                             minValue: -64, maxValue: 63, setValueLatency: latency)
+        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
+            FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute", stringValue: "off"),
+            pan,
+        ])
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication",
+                              children: [FakeAXNode(role: "AXWindow", children: [area])]))
+        p.nudgeMode = true
+        return p
+    }
+
+    /// Regression test: pre-fix, `AXBridge.nudgeToRaw`'s single immediate post-nudge read sees
+    /// the stale (unchanged) raw value on iteration 1, concludes the slider is "stuck", and
+    /// returns 5 short of the -5 target having never actually moved. Post-fix, the settle-poll
+    /// in `AXBridge.settledValue` waits out the lag before trusting "no movement".
+    func testSetPanConvergesThroughAsyncValueReadLag() async throws {
+        let d = await daemon(stripWithLaggyPan(latency: 2))
+        _ = try await d.axMixer.syncTracks()
+        let result = try await SetPanTool(daemon: d).invoke(["track": .string("vox"), "position": .int(-5)])
+        guard case .object(let o) = result else { return XCTFail() }
+        XCTAssertEqual(o["pan"], .int(-5), "convergence must not bail early on a stale post-nudge read")
+        XCTAssertEqual(o["source"], .string("ax"))
+    }
+
+    /// Same async-value fake, but through `axConvergeVolume`'s raw-value stuck-detection
+    /// (`nowRaw == lastRaw`). Only the volume fader's raw `.value` attribute lags —
+    /// the dB fader-level TITLE (a separate AX attribute, updated via `onSetNumber`) stays
+    /// immediately accurate, exactly matching the real-Logic smoke bug shape.
+    func stripWithLaggyVolumeCurve(latency: Int) -> FakeAXProvider {
+        let level = FakeAXNode(role: "AXStaticText", description: "volume fader level",
+                               title: "volume fader level, 0.0 dB")
+        let vol = FakeAXNode(role: "AXSlider", description: "volume fader", value: 173,
+                             settable: true, minValue: 0, maxValue: 233, setValueLatency: latency)
+        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
+            FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute", stringValue: "off"),
+            vol, level,
+        ])
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication",
+                               children: [FakeAXNode(role: "AXWindow", children: [area])]))
+        p.nudgeMode = true
+        p.onSetNumber = { node, resulting in
+            guard node === vol else { return }
+            let db = (resulting - 173) * 0.1
+            level.title = "volume fader level, \(String(format: "%+.1f", db)) dB"
+        }
+        return p
+    }
+
+    /// Regression test — real-Logic smoke evidence: `set_volume db:-0.2` converged from -4.1
+    /// and bailed at -1.1 dB (~0.9 dB short) because a post-nudge raw-value read came back stale
+    /// and looked stuck. Pre-fix here, the same shape: `axConvergeVolume` bails on iteration 1
+    /// having barely moved off 0.0 dB. Post-fix, the settle-poll confirms each apparent "stuck"
+    /// before trusting it, and convergence reaches the target.
+    func testSetVolumeConvergesThroughAsyncValueReadLag() async throws {
+        let d = await daemon(stripWithLaggyVolumeCurve(latency: 2))
+        _ = try await d.axMixer.syncTracks()
+        let result = try await SetVolumeTool(daemon: d).invoke(["track": .string("vox"), "db": .double(-1.0)])
+        guard case .object(let o) = result, case .double(let db)? = o["volumeDB"] else { return XCTFail() }
+        XCTAssertEqual(db, -1.0, accuracy: 0.11,
+                       "convergence must not bail early on a stale post-nudge raw-value read")
+    }
+
     func testSetPanWritesAndReadsBack() async throws {
         let d = await daemon(oneStrip())
         _ = try await d.axMixer.syncTracks()
