@@ -236,6 +236,43 @@ final class StructureToolTests: XCTestCase {
         XCTAssertEqual(o["output"], .string("Bus 3"))
     }
 
+    /// Regression test for the settle-poll fix, mirroring `testCreateTrackWaitsForAsyncStripAppearance`
+    /// for `settleOutput`: all THREE other set_output tests mutate the output button's description
+    /// SYNCHRONOUSLY inside `onPress` (`providerWithOutputPopup` above), so `settleOutput`'s immediate
+    /// first read always satisfies the condition and the poll loop/sleep/deadline logic is never
+    /// exercised. This fake models the async lag directly: pressing "Bus 3" schedules the output
+    /// button's description to become "Bus 3" via `scheduleDescriptionChange(to:afterReads:)` instead
+    /// of mutating it in place, so it stays "Bus 9" for several `.description` reads after the press.
+    /// Each `AXBridge.read(strip)` call reads the button's `.description` SIX times (the four
+    /// `control(strip, description:)` probes for volume/mute/solo/pan each scan the strip's only
+    /// child — this button — plus `outputButton`'s by-exclusion scan and `AXBridge.read`'s final
+    /// fetch), so `afterReads: 8` guarantees the change is still hidden through the whole first
+    /// `read(strip)` call and only lands on the second (i.e. after a real 50ms sleep + retry).
+    /// Against a `settleOutput` reduced to a single immediate read this test FAILS with "output
+    /// change not confirmed", observed "Bus 9" (verified by stashing the fix — see task report for
+    /// the RED transcript); the real settle-poll waits it out and succeeds.
+    func testSetOutputSettlesThroughAsyncLag() async throws {
+        let outputButton = FakeAXNode(role: "AXButton", description: "Bus 9")
+        let bus1 = FakeAXNode(role: "AXMenuItem", title: "Bus 1")
+        let bus3 = FakeAXNode(role: "AXMenuItem", title: "Bus 3")
+        bus3.onPress = { outputButton.scheduleDescriptionChange(to: "Bus 3", afterReads: 8) }
+        let busSubmenu = FakeAXNode(role: "AXMenu", children: [bus1, bus3])
+        let busItem = FakeAXNode(role: "AXMenuItem", title: "Bus", children: [busSubmenu])
+        let noOutput = FakeAXNode(role: "AXMenuItem", title: "No Output")
+        let topMenu = FakeAXNode(role: "AXMenu", children: [noOutput, busItem])
+        outputButton.children = [topMenu]
+
+        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [outputButton])
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
+        let window = FakeAXNode(role: "AXWindow", children: [area])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
+        let d = await daemon(p)
+        let r = try await SetOutputTool(daemon: d).invoke(["track": .string("vox"), "dest": .string("Bus 3")])
+        guard case .object(let o) = r else { return XCTFail() }
+        XCTAssertEqual(o["track"], .string("vox"))
+        XCTAssertEqual(o["output"], .string("Bus 3"), "settleOutput should poll until the async description change lands")
+    }
+
     func testSetOutputTopLevelDestWorks() async throws {
         let (p, _) = providerWithOutputPopup()
         let d = await daemon(p)

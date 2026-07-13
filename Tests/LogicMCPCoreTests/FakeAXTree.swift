@@ -35,6 +35,14 @@ final class FakeAXNode {
     var setValueLatency = 0
     private var pendingNumberValue: Double?
     private var numberLatencyCountdown = 0
+    /// Models Logic's ASYNCHRONOUS AX-tree description update after a routing-popup leaf press
+    /// (e.g. `set_output`'s output button showing the new destination): a description change
+    /// scheduled via `scheduleDescriptionChange(to:afterReads:)` is held back from `description`
+    /// until this many subsequent `.description` reads on THIS node have occurred — same
+    /// countdown shape as `pendingChildAppend`/`childAppendCountdown` above, just keyed to the
+    /// `.description` string attribute instead of a `children(of:)` structural read.
+    private var pendingDescription: String?
+    private var descriptionCountdown = 0
     /// Test-only window-open/close wiring: set on an "open" button so a press adds this window
     /// to the tree (simulating Logic opening a plugin), or on a "close" button so a press
     /// removes it. Both nil (the default) preserves the old no-op press behavior for every
@@ -146,6 +154,34 @@ final class FakeAXNode {
         pendingChildAppend = nil
         return children
     }
+
+    /// Schedule `description` to change to `new`, but only revealed after `afterReads` subsequent
+    /// `.description` reads on this node (see `readDescriptionForLatency()`). Zero (or omitted)
+    /// changes immediately — the old synchronous "onPress mutates .description directly" shape
+    /// every other `set_output` test still uses (see the class-doc comment on `description` above).
+    func scheduleDescriptionChange(to new: String, afterReads: Int) {
+        if afterReads <= 0 {
+            description = new
+        } else {
+            pendingDescription = new
+            descriptionCountdown = afterReads
+        }
+    }
+
+    /// Called by the provider's `.description` string read. If a change is pending latency,
+    /// decrements the countdown and keeps returning the stale (pre-change) description; the
+    /// pending value is published and revealed only once the countdown reaches 0 — same shape as
+    /// `readValueForLatency()`/`readChildrenForLatency()` above, applied to `.description`.
+    func readDescriptionForLatency() -> String? {
+        guard let pending = pendingDescription else { return description }
+        if descriptionCountdown > 0 {
+            descriptionCountdown -= 1
+            return description   // still stale
+        }
+        description = pending
+        pendingDescription = nil
+        return description
+    }
 }
 
 final class FakeAXProvider: AXProvider, @unchecked Sendable {
@@ -196,7 +232,7 @@ final class FakeAXProvider: AXProvider, @unchecked Sendable {
         switch attr {
         case .role: return n.role
         case .subrole: return n.subrole
-        case .description: return n.description
+        case .description: return n.readDescriptionForLatency()
         case .title: return n.title
         case .help: return nil
         case .value: return n.readValueForLatency() ?? n.numberValue.map { String($0) }
