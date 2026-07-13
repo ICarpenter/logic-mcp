@@ -83,6 +83,10 @@ public final class SystemAXProvider: AXProvider, @unchecked Sendable {
         let r = AXUIElementPerformAction(raw(h), action.rawValue as CFString)
         if r != .success { throw AXUnavailable() }
     }
+    public func setString(_ s: String, of h: AXHandle) throws {
+        let r = AXUIElementSetAttributeValue(raw(h), kAXValueAttribute as CFString, s as CFString)
+        if r != .success { throw AXUnavailable() }
+    }
     public func minMax(of h: AXHandle) -> (Double?, Double?) {
         func d(_ key: String) -> Double? {
             var v: CFTypeRef?

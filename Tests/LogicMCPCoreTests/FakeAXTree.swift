@@ -38,6 +38,9 @@ final class FakeAXNode {
     /// other test — only tests that model a slot's window appearing/disappearing set these.
     var opensWindow: FakeAXNode?
     var closesWindow: FakeAXNode?
+    /// Test-only hook fired on `.press` (after any AXSwitch flip / window open-close behavior)
+    /// so a pressed menu item can mutate the fake tree — e.g. "New Audio Track adds a strip".
+    var onPress: (() -> Void)?
 
     init(role: String, subrole: String? = nil, description: String? = nil,
          title: String? = nil, stringValue: String? = nil, value: Double? = nil,
@@ -117,6 +120,14 @@ final class FakeAXProvider: AXProvider, @unchecked Sendable {
     var nudgeMode = false
     /// Hook that sees the RESULTING value after each setNumber call (Task 6 titles).
     var onSetNumber: ((FakeAXNode, Double) -> Void)?
+    /// Root of the fake `AXMenuBar → AXMenuBarItem → AXMenu → AXMenuItem` tree, set directly by
+    /// a test or via `makeMenuBar(_:)` below. Nil (the default) makes `menuBar()` return nil,
+    /// same "unavailable" shape as `SystemAXProvider` with no running Logic. `didSet` indexes the
+    /// tree into `byHandle` — it lives outside `rootNode`'s children, so it wouldn't otherwise be
+    /// reachable by `node(_:)`.
+    var menuBarNode: FakeAXNode? {
+        didSet { if let bar = menuBarNode { index(bar) } }
+    }
 
     init(root: FakeAXNode) {
         self.rootNode = root
@@ -152,6 +163,11 @@ final class FakeAXProvider: AXProvider, @unchecked Sendable {
         guard let n = node(h) else { return (nil, nil) }
         return (n.minValue, n.maxValue)
     }
+    func menuBar() -> AXHandle? { menuBarNode.map { AXHandle(fake: $0) } }
+    func setString(_ s: String, of h: AXHandle) throws {
+        guard let n = node(h) else { throw AXUnavailable() }
+        n.stringValue = s
+    }
     func setNumber(_ v: Double, of h: AXHandle) throws {
         guard let n = node(h), n.settable else { throw AXUnavailable() }
         let cur = n.numberValue ?? 0
@@ -181,6 +197,26 @@ final class FakeAXProvider: AXProvider, @unchecked Sendable {
             if let closes = n.closesWindow {
                 rootNode.children.removeAll { $0 === closes }
             }
+        case .showMenu, .cancel:
+            break   // no-op in the fake; callers use these for popups/dialogs (Task 3+)
         }
+        if action == .press { n.onPress?() }
+    }
+
+    /// Builds `AXMenuBar → AXMenuBarItem(title) → AXMenu → AXMenuItem(title, onPress:)` and
+    /// installs it as `menuBarNode`, in `items` order (a dictionary would make "available: ..."
+    /// error-message assertions order-flaky). Convenience for structural-ops tests so they don't
+    /// hand-build the tree the way `AXMenuDriverTests.providerPressingSetsFlag` does.
+    func makeMenuBar(_ items: [(bar: String, items: [(title: String, onPress: (() -> Void)?)])]) {
+        let barItems = items.map { spec -> FakeAXNode in
+            let menuItems = spec.items.map { leaf -> FakeAXNode in
+                let item = FakeAXNode(role: "AXMenuItem", title: leaf.title)
+                item.onPress = leaf.onPress
+                return item
+            }
+            let menu = FakeAXNode(role: "AXMenu", children: menuItems)
+            return FakeAXNode(role: "AXMenuBarItem", title: spec.bar, children: [menu])
+        }
+        menuBarNode = FakeAXNode(role: "AXMenuBar", children: barItems)
     }
 }
