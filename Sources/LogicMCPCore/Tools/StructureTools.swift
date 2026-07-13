@@ -75,6 +75,48 @@ public struct SelectTrackTool: LogicTool {
     }
 }
 
+public struct DeleteTrackTool: LogicTool {
+    public let name = "delete_track"
+    public let description = "Delete a track. Reversible via Logic-native undo (call undo_structural to restore). Verified by re-reading the mixer."
+    public let inputSchema: Value = .object([
+        "type": .string("object"),
+        "properties": .object(["name": .object(["type": .string("string")])]),
+        "required": .array([.string("name")]),
+    ])
+    let daemon: Daemon
+    public func invoke(_ args: [String: Value]) async throws -> Value {
+        let name = try requireString(args, "name", tool: name)
+        let strip = try await daemon.ax.find(name)             // throws layer:"ax" if unknown
+        let resolved = await daemon.ax.read(strip).name
+        try await daemon.menu.pressElement(strip)              // select the target
+        try await daemon.menu.pressMenuPath(["Track", "Delete Track"])
+        // Verify: the strip disappeared. Logic's AX tree updates ASYNCHRONOUSLY after a menu
+        // press (see create_track's settleTracks comment) — settle-poll instead of trusting a
+        // single immediate re-read.
+        let after = try await settleTracks(daemon) { names in !names.contains(resolved) }
+        guard !after.contains(resolved) else {
+            throw ToolFailure(error: "delete not confirmed", layer: "ax",
+                              expected: "'\(resolved)' gone", observed: "still present")
+        }
+        return .object(["deleted": .string(resolved), "reversible": .string("call undo_structural")])
+    }
+}
+
+public struct UndoStructuralTool: LogicTool {
+    public let name = "undo_structural"
+    public let description = "Undo the last structural edit via Logic's Edit ▸ Undo (e.g. reverse a delete_track/create_track)."
+    public let inputSchema: Value = .object(["type": .string("object"), "properties": .object([:])])
+    let daemon: Daemon
+    public func invoke(_ args: [String: Value]) async throws -> Value {
+        let before = try await currentTrackNames(daemon)
+        try await daemon.menu.pressMenuPath(["Edit", "Undo"])
+        // Same async-AX-update hazard as create_track/delete_track — settle-poll until the
+        // mixer's track list actually reflects the undo instead of trusting an immediate re-read.
+        _ = try await settleTracks(daemon) { names in names != before }
+        return .object(["undone": .bool(true)])
+    }
+}
+
 // Shared helpers used across structure tools.
 func currentTrackNames(_ daemon: Daemon) async throws -> [String] {
     try await daemon.axMixer.syncTracks()

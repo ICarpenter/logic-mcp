@@ -106,4 +106,88 @@ final class StructureToolTests: XCTestCase {
             XCTAssertFalse(f.error.contains("not available"), "unknown-track error should be find()'s, not the deferred-rename error")
         }
     }
+
+    // MARK: - delete_track / undo_structural
+    //
+    // Safety model (Fixtures/ax/checkpoint.txt): Save/Save As/Save A Copy As/Project
+    // Alternatives are ALL disabled in real Logic, so delete_track does NOT auto-checkpoint.
+    // Its safety is that structural ops are reversible via Logic-native Edit ▸ Undo (proven on
+    // real Logic: create_track then Edit ▸ Undo cleanly restored the strip count). These fakes
+    // model that: pressing the "scratch" strip records it as the current selection (mirroring
+    // Logic acting on "the selected track"); pressing "Delete Track" removes the selection from
+    // the mixer AXLayoutArea; pressing "Undo" (providerDeletableWithUndo only) re-appends it.
+
+    /// Track ▸ Delete Track removes the currently-selected strip from the mixer area.
+    func providerDeletable(_ trackName: String) -> FakeAXProvider {
+        let scratch = FakeAXNode(role: "AXLayoutItem", description: trackName)
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [
+            FakeAXNode(role: "AXLayoutItem", description: "vox"), scratch,
+        ])
+        let window = FakeAXNode(role: "AXWindow", children: [area])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
+        var selected: FakeAXNode?
+        scratch.onPress = { selected = scratch }
+        p.makeMenuBar([
+            (bar: "Track", items: [(title: "Delete Track", onPress: {
+                if let s = selected { area.children.removeAll { $0 === s } }
+            })]),
+        ])
+        return p
+    }
+
+    /// Same as `providerDeletable`, plus Edit ▸ Undo re-appends whichever strip "Delete Track"
+    /// last removed.
+    func providerDeletableWithUndo(_ trackName: String) -> FakeAXProvider {
+        let scratch = FakeAXNode(role: "AXLayoutItem", description: trackName)
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [
+            FakeAXNode(role: "AXLayoutItem", description: "vox"), scratch,
+        ])
+        let window = FakeAXNode(role: "AXWindow", children: [area])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
+        var selected: FakeAXNode?
+        scratch.onPress = { selected = scratch }
+        p.makeMenuBar([
+            (bar: "Track", items: [(title: "Delete Track", onPress: {
+                if let s = selected { area.children.removeAll { $0 === s } }
+            })]),
+            (bar: "Edit", items: [(title: "Undo", onPress: {
+                if let s = selected, !area.children.contains(where: { $0 === s }) {
+                    area.children.append(s)
+                }
+            })]),
+        ])
+        return p
+    }
+
+    func testDeleteTrackRemovesStrip() async throws {
+        // fake: press "Delete Track" removes the selected strip from the mixer area
+        let d = await daemon(providerDeletable("scratch"))
+        _ = try await d.axMixer.syncTracks()
+        let r = try await DeleteTrackTool(daemon: d).invoke(["name": .string("scratch")])
+        guard case .object(let o) = r else { return XCTFail() }
+        XCTAssertEqual(o["deleted"], .string("scratch"))
+        let names = try await currentTrackNames(d)
+        XCTAssertFalse(names.contains("scratch"))
+    }
+
+    func testDeleteTrackUnknownTrackErrorsAX() async throws {
+        let d = await daemon(providerDeletable("scratch"))
+        _ = try await d.axMixer.syncTracks()
+        do {
+            _ = try await DeleteTrackTool(daemon: d).invoke(["name": .string("nope")])
+            XCTFail("expected a track-not-found ToolFailure")
+        } catch let f as ToolFailure {
+            XCTAssertEqual(f.layer, "ax")   // find() throws layer:"ax" for unknown track
+        }
+    }
+
+    func testUndoStructuralRestores() async throws {
+        // fake: press "Undo" re-adds the last removed strip
+        let d = await daemon(providerDeletableWithUndo("scratch"))
+        _ = try await d.axMixer.syncTracks()
+        _ = try await DeleteTrackTool(daemon: d).invoke(["name": .string("scratch")])
+        _ = try await UndoStructuralTool(daemon: d).invoke([:])
+        let names = try await currentTrackNames(d)
+        XCTAssertTrue(names.contains("scratch"))
+    }
 }
