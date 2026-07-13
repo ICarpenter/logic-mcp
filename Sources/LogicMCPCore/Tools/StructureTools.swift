@@ -102,6 +102,33 @@ public struct DeleteTrackTool: LogicTool {
     }
 }
 
+public struct SetOutputTool: LogicTool {
+    public let name = "set_output"
+    public let description = "Set a track's output destination (a bus or output). The routing popup is NESTED — destinations live one submenu deep under 'Output ▸'/'Bus ▸' — so callers just pass the destination name (e.g. 'Bus 3', 'Stereo Output', 'No Output') and the tool finds it. Verified by re-reading the strip's output slot."
+    public let inputSchema = trackArgSchema(["dest": .object(["type": .string("string")])], required: ["dest"])
+    let daemon: Daemon
+    public func invoke(_ args: [String: Value]) async throws -> Value {
+        let track = try requireString(args, "track", tool: name)
+        let dest = try requireString(args, "dest", tool: name)
+        let strip = try await daemon.ax.find(track)
+        // The output button has a dynamic description (current dest); AXBridge finds it by exclusion.
+        guard let outBtn = await daemon.ax.outputButtonHandle(strip) else {
+            throw ToolFailure(error: "no output slot on '\(track)'", layer: "ax",
+                              expected: "the output-routing button", observed: "none")
+        }
+        try await daemon.menu.selectPopupLeaf(from: outBtn, title: dest)   // nested popup — see fixture
+        // Same async-AX-update hazard as create_track/delete_track's settleTracks: the output
+        // button's description can lag the popup-leaf press. settleOutput polls the STRIP'S
+        // OUTPUT — settleTracks polls the track-name list, the wrong oracle for this tool.
+        let now = await settleOutput(daemon, strip: strip) { $0?.caseInsensitiveCompare(dest) == .orderedSame }
+        guard now?.caseInsensitiveCompare(dest) == .orderedSame else {
+            throw ToolFailure(error: "output change not confirmed", layer: "ax",
+                              expected: dest, observed: now ?? "unreadable")
+        }
+        return .object(["track": .string(track), "output": .string(now ?? dest)])
+    }
+}
+
 public struct UndoStructuralTool: LogicTool {
     public let name = "undo_structural"
     public let description = "Undo the last structural edit via Logic's Edit ▸ Undo (e.g. reverse a delete_track/create_track)."
@@ -139,4 +166,25 @@ func settleTracks(_ daemon: Daemon, timeout: Duration = .seconds(3),
         if condition(names) { return names }
     }
     return names
+}
+
+/// Poll the STRIP'S OUTPUT SLOT (re-reading via AX) until `condition` holds on the output
+/// string, or the deadline passes. `settleTracks` above polls the mixer's track-name list —
+/// the wrong oracle for `set_output`, whose effect lands on one strip's output button, not the
+/// strip list. Same async-AX-update hazard as `settleTracks`: a routing-popup leaf press's
+/// effect on the button's description can lag the press ("blind-press-then-read" is this
+/// codebase's top bug class). Polls every 50ms for up to `timeout`. Returns the final output
+/// string (nil if the strip has no readable output).
+@discardableResult
+func settleOutput(_ daemon: Daemon, strip: AXHandle, timeout: Duration = .seconds(3),
+                  until condition: (String?) -> Bool) async -> String? {
+    var output = await daemon.ax.read(strip).output
+    if condition(output) { return output }
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        try? await Task.sleep(for: .milliseconds(50))
+        output = await daemon.ax.read(strip).output
+        if condition(output) { return output }
+    }
+    return output
 }

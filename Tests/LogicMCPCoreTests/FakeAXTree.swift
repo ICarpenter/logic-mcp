@@ -7,7 +7,10 @@ import Foundation
 final class FakeAXNode {
     let role: String
     let subrole: String?
-    let description: String?
+    /// `var`, not `let`: a routing-popup leaf's `onPress` (Task 7's `set_output`) needs to
+    /// mutate the output BUTTON's own description in place — that's how the fake models Logic
+    /// updating the button's displayed destination after a popup selection lands.
+    var description: String?
     var title: String?
     var stringValue: String?
     var numberValue: Double?

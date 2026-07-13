@@ -111,4 +111,28 @@ public actor AXMenuDriver {
             else { try? p.perform(.press, on: match); try? await Task.sleep(for: .milliseconds(30)); current = match }
         }
     }
+
+    /// Open `control`'s popup and press the LEAF whose title matches `title` — searching the popup's
+    /// menu tree at top level OR one submenu deep (Logic's routing popup nests destinations under
+    /// "Output ▸" / "Bus ▸"; see Fixtures/ax/popup_output.txt). Dismisses the popup on a miss so
+    /// nothing is left hanging. The control supports AXPress only (no AXShowMenu).
+    public func selectPopupLeaf(from control: AXHandle, title: String) async throws {
+        try p.perform(.press, on: control)          // opens the popup (AXShowMenu is unsupported)
+        try? await Task.sleep(for: .milliseconds(60))
+        // Collect candidate leaves: top-level items + items one submenu deep.
+        var leaves: [AXHandle] = []
+        for item in menuItems(under: control) {
+            leaves.append(item)
+            leaves.append(contentsOf: menuItems(under: item))   // one level of submenu
+        }
+        guard let hit = leaves.first(where: {
+            (p.string(.title, of: $0) ?? "").caseInsensitiveCompare(title) == .orderedSame
+        }) else {
+            try? p.perform(.cancel, on: control)
+            throw ToolFailure(error: "no routing destination '\(title)'", layer: "ax",
+                              expected: "a bus/output leaf in the popup",
+                              observed: "available: \(leaves.compactMap { p.string(.title, of: $0) }.filter { !$0.isEmpty }.joined(separator: ", "))")
+        }
+        try p.perform(.press, on: hit)
+    }
 }

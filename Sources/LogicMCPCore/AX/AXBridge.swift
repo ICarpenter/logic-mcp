@@ -89,6 +89,11 @@ public actor AXBridge {
         }
     }
 
+    /// Public passthrough to `outputButton(_:)` for `set_output` (Task 7) — the output-routing
+    /// button is found by exclusion (its description is the CURRENT destination, e.g. "Bus 9",
+    /// not a fixed label), and only `AXBridge` can walk a strip's children to locate it.
+    public func outputButtonHandle(_ strip: AXHandle) -> AXHandle? { outputButton(strip) }
+
     public func read(_ strip: AXHandle) -> AXStripControls {
         let name = p.string(.description, of: strip) ?? ""
         var db: Double?; var silent = false

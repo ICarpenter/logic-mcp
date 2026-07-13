@@ -190,4 +190,69 @@ final class StructureToolTests: XCTestCase {
         let names = try await currentTrackNames(d)
         XCTAssertTrue(names.contains("scratch"))
     }
+
+    // MARK: - set_output (NESTED routing popup)
+    //
+    // Ground truth: Fixtures/ax/popup_output.txt (real Logic, backgrounded). The strip's output
+    // button (an AXButton whose description IS the current destination, e.g. "Bus 9") supports
+    // AXPress only — pressing it opens a popup whose AXMenu tree is NESTED: top level holds
+    // "No Output" plus "Output ▸"/"Bus ▸" submenus; real destinations ("Bus 3", "Stereo Output")
+    // are leaves one submenu deep. This models that shape: the button's child AXMenu has
+    // top-level items "No Output"/"Output"(submenu: "Stereo Output")/"Bus"(submenu: "Bus 1","Bus 3"),
+    // and pressing a leaf mutates the output button's OWN description in place (mirroring Logic
+    // updating the strip's displayed destination once the popup selection lands).
+    func providerWithOutputPopup(current: String = "Bus 9") -> (p: FakeAXProvider, outputButton: FakeAXNode) {
+        let outputButton = FakeAXNode(role: "AXButton", description: current)
+
+        let noOutput = FakeAXNode(role: "AXMenuItem", title: "No Output")
+        noOutput.onPress = { outputButton.description = "No Output" }
+
+        let stereoOut = FakeAXNode(role: "AXMenuItem", title: "Stereo Output")
+        let outputSubmenu = FakeAXNode(role: "AXMenu", children: [stereoOut])
+        let outputItem = FakeAXNode(role: "AXMenuItem", title: "Output", children: [outputSubmenu])
+
+        let bus1 = FakeAXNode(role: "AXMenuItem", title: "Bus 1")
+        let bus3 = FakeAXNode(role: "AXMenuItem", title: "Bus 3")
+        bus3.onPress = { outputButton.description = "Bus 3" }
+        let busSubmenu = FakeAXNode(role: "AXMenu", children: [bus1, bus3])
+        let busItem = FakeAXNode(role: "AXMenuItem", title: "Bus", children: [busSubmenu])
+
+        let topMenu = FakeAXNode(role: "AXMenu", children: [noOutput, outputItem, busItem])
+        outputButton.children = [topMenu]
+
+        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [outputButton])
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
+        let window = FakeAXNode(role: "AXWindow", children: [area])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
+        return (p, outputButton)
+    }
+
+    func testSetOutputSelectsSubmenuLeafAndConfirms() async throws {
+        let (p, _) = providerWithOutputPopup()
+        let d = await daemon(p)
+        let r = try await SetOutputTool(daemon: d).invoke(["track": .string("vox"), "dest": .string("Bus 3")])
+        guard case .object(let o) = r else { return XCTFail() }
+        XCTAssertEqual(o["track"], .string("vox"))
+        XCTAssertEqual(o["output"], .string("Bus 3"))
+    }
+
+    func testSetOutputTopLevelDestWorks() async throws {
+        let (p, _) = providerWithOutputPopup()
+        let d = await daemon(p)
+        let r = try await SetOutputTool(daemon: d).invoke(["track": .string("vox"), "dest": .string("No Output")])
+        guard case .object(let o) = r else { return XCTFail() }
+        XCTAssertEqual(o["output"], .string("No Output"))
+    }
+
+    func testSetOutputUnknownDestThrowsAXWithAvailableTitles() async throws {
+        let (p, _) = providerWithOutputPopup()
+        let d = await daemon(p)
+        do {
+            _ = try await SetOutputTool(daemon: d).invoke(["track": .string("vox"), "dest": .string("Bus 99")])
+            XCTFail("expected a ToolFailure")
+        } catch let f as ToolFailure {
+            XCTAssertEqual(f.layer, "ax")
+            XCTAssertTrue(f.observed?.contains("Bus 3") ?? false, "should list available destinations: \(f.observed ?? "nil")")
+        }
+    }
 }

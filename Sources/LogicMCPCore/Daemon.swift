@@ -38,6 +38,7 @@ public final class Daemon: Sendable {
         await registry.register(RenameTrackTool(daemon: self))
         await registry.register(SelectTrackTool(daemon: self))
         await registry.register(DeleteTrackTool(daemon: self))
+        await registry.register(SetOutputTool(daemon: self))
         await registry.register(UndoStructuralTool(daemon: self))
         await registry.register(UndoLastTool(daemon: self, registry: registry))
     }
