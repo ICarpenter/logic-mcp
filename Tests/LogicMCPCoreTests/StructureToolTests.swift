@@ -80,4 +80,30 @@ final class StructureToolTests: XCTestCase {
         XCTAssertEqual(o["selected"], .string("Vocals"))
         XCTAssertTrue(pressed, "select_track should press the resolved strip")
     }
+
+    /// rename_track is deferred (Fixtures/ax/rename.txt: AXSetValue on Logic's track-name fields
+    /// is cosmetic-only and never commits) — it must resolve the track via AXBridge.find() FIRST
+    /// (so a bad name still gets the precise `layer:"ax"` find() error) and then always throw the
+    /// structured "not available" error, the same honest pattern as Phase 2's set_send.
+    func testRenameTrackReturnsNotAvailableError() async throws {
+        let d = await daemon(provider())
+        do {
+            _ = try await RenameTrackTool(daemon: d).invoke(["track": .string("vox"), "to": .string("lead vox")])
+            XCTFail("expected a not-available ToolFailure")
+        } catch let f as ToolFailure {
+            XCTAssertEqual(f.layer, "ax")
+            XCTAssertTrue(f.error.contains("not available"))
+        }
+    }
+
+    func testRenameTrackUnknownTrackStillErrorsClearly() async throws {
+        let d = await daemon(provider())
+        do {
+            _ = try await RenameTrackTool(daemon: d).invoke(["track": .string("nope"), "to": .string("lead vox")])
+            XCTFail("expected a track-not-found ToolFailure")
+        } catch let f as ToolFailure {
+            XCTAssertEqual(f.layer, "ax")   // find() throws layer:"ax" for unknown track
+            XCTAssertFalse(f.error.contains("not available"), "unknown-track error should be find()'s, not the deferred-rename error")
+        }
+    }
 }

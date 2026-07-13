@@ -6,7 +6,15 @@ public actor AXBridge {
     private let p: AXProvider
     public init(provider: AXProvider) { self.p = provider }
 
-    /// Depth-first search for the `AXLayoutArea desc="Mixer"` under any window.
+    /// Depth-first search for `AXLayoutArea desc="Mixer"` under any window. NOT simply the first
+    /// match: the Arrange window's Inspector contains a MINI-MIXER with the SAME role+description,
+    /// showing only the selected track's strip (+ its output) — e.g. ["vox", "Aux 1"] instead of
+    /// all 20 strips. Taking the first match across `windows()` worked before only by window-
+    /// ordering luck (the real Mixer window happened to come first); if that order shifted,
+    /// `stripHandles()` would silently read 1–2 strips instead of 20 (see Fixtures/ax/rename.txt).
+    /// Disambiguate across EVERY window by picking the candidate area with the MOST `AXLayoutItem`
+    /// children (the real mixer always has more strips than a single-track mini-mixer), tie-
+    /// breaking on the containing window's title mentioning "Mixer".
     private func mixerArea() throws -> AXHandle {
         func rec(_ h: AXHandle, _ d: Int) -> AXHandle? {
             if d > 8 { return nil }
@@ -14,10 +22,21 @@ public actor AXBridge {
             for c in p.children(of: h) { if let f = rec(c, d + 1) { return f } }
             return nil
         }
-        for w in p.windows() { if let a = rec(w, 0) { return a } }
-        throw ToolFailure(error: "no mixer surface", layer: "ax",
-                          expected: "an open Mixer window or pane",
-                          observed: "no AXLayoutArea \"Mixer\" in any window — open the Mixer (View ▸ Show Mixer)")
+        let candidates: [(area: AXHandle, stripCount: Int, windowTitleHasMixer: Bool)] = p.windows().compactMap { w in
+            guard let a = rec(w, 0) else { return nil }
+            let stripCount = p.children(of: a).filter { p.string(.role, of: $0) == "AXLayoutItem" }.count
+            let titleHasMixer = (p.string(.title, of: w) ?? "").contains("Mixer")
+            return (a, stripCount, titleHasMixer)
+        }
+        guard let best = candidates.max(by: { lhs, rhs in
+            if lhs.stripCount != rhs.stripCount { return lhs.stripCount < rhs.stripCount }
+            return (lhs.windowTitleHasMixer ? 1 : 0) < (rhs.windowTitleHasMixer ? 1 : 0)
+        }) else {
+            throw ToolFailure(error: "no mixer surface", layer: "ax",
+                              expected: "an open Mixer window or pane",
+                              observed: "no AXLayoutArea \"Mixer\" in any window — open the Mixer (View ▸ Show Mixer)")
+        }
+        return best.area
     }
 
     public func stripHandles() throws -> [(name: String, handle: AXHandle)] {

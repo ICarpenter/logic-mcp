@@ -3,12 +3,11 @@ import MCP
 
 public struct CreateTrackTool: LogicTool {
     public let name = "create_track"
-    public let description = "Create a new track. kind: 'audio' | 'software-instrument' | 'midi'. Optional name renames it after creation. Verified by re-reading the mixer."
+    public let description = "Create a new track. kind: 'audio' | 'software-instrument' | 'midi'. Logic assigns the default name (e.g. 'Audio 1'); renaming is not available via AX in this release. Verified by re-reading the mixer."
     public let inputSchema: Value = .object([
         "type": .string("object"),
         "properties": .object([
             "kind": .object(["type": .string("string"), "enum": .array([.string("audio"), .string("software-instrument"), .string("midi")])]),
-            "name": .object(["type": .string("string")]),
         ]),
         "required": .array([.string("kind")]),
     ])
@@ -33,12 +32,27 @@ public struct CreateTrackTool: LogicTool {
             throw ToolFailure(error: "track creation not confirmed", layer: "ax",
                               expected: "a new strip after '\(item)'", observed: "mixer unchanged")
         }
-        var finalName = created
-        if let want = args["name"]?.stringValue, want != created {
-            _ = try? await renameTrackAX(daemon, from: created, to: want)
-            finalName = (try await currentTrackNames(daemon)).contains(want) ? want : created
-        }
-        return .object(["created": .bool(true), "track": .string(finalName), "kind": .string(kind)])
+        return .object(["created": .bool(true), "track": .string(created), "kind": .string(kind)])
+    }
+}
+
+public struct RenameTrackTool: LogicTool {
+    public let name = "rename_track"
+    public let description = "Rename a track. NOTE: renaming is not available via the Accessibility path in this release; this tool returns a structured error directing you to Logic directly. (Reading/selecting tracks still works via refresh_state/select_track.)"
+    public let inputSchema = trackArgSchema(["to": .object(["type": .string("string")])], required: ["to"])
+    let daemon: Daemon
+    public func invoke(_ args: [String: Value]) async throws -> Value {
+        let trackName = try requireString(args, "track", tool: name)
+        _ = try requireString(args, "to", tool: name)
+        // Resolve via AX first so a bad/ambiguous track name still gives the precise
+        // AXBridge.find() error, not a blanket "not available" that would mask it.
+        let strip = try await daemon.ax.find(trackName)
+        let resolved = await daemon.ax.read(strip).name
+        throw ToolFailure(
+            error: "renaming a track is not available via AX in this release",
+            layer: "ax",
+            expected: "rename '\(resolved)' in Logic directly",
+            observed: "Logic's track-name fields are not AX-committable — AXSetValue changes the field cosmetically but never commits the edit (see Fixtures/ax/rename.txt)")
     }
 }
 
@@ -83,10 +97,4 @@ func settleTracks(_ daemon: Daemon, timeout: Duration = .seconds(3),
         if condition(names) { return names }
     }
     return names
-}
-
-/// Rename a track by name via AX. Stubbed here; Task 4 wires the real implementation
-/// (locate the strip's name field, set its text, verify via re-read).
-func renameTrackAX(_ daemon: Daemon, from: String, to: String) async throws -> String {
-    throw ToolFailure(error: "rename not yet implemented", layer: "ax")
 }
