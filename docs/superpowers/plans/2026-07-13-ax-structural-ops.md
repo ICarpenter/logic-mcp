@@ -573,9 +573,18 @@ Add to `AXBridge` (Task-2-adjacent; it already wraps the provider): `public func
 
 ---
 
-## Task 5: `checkpoint` (safety primitive)
+## Task 5: `checkpoint` — DEFERRED (superseded by Task 1's finding)
 
-**Files:** Modify `StructureTools.swift`, `StructureToolTests.swift`.
+**DO NOT IMPLEMENT.** Task 1's real-Logic probe (see `Fixtures/ax/checkpoint.txt`) found that
+`File ▸ Save`, `Save As…`, `Save A Copy As…`, AND `Project Alternatives` are all **disabled** in
+Logic — confirmed after opening the File menu, so it's real, not stale. Both the primary and the
+fallback checkpoint mechanisms are unavailable. Per the user's decision (2026-07-13), the safety
+model is **undo-based** instead: structural ops are reversible via Logic-native `Edit ▸ Undo`
+(proven: created a track, undid it cleanly). The standalone `checkpoint(label)` snapshot tool is
+**deferred to a later phase**. Skip this task entirely; `delete_track` (Task 6) uses undo-based
+safety, not auto-checkpoint.
+
+<details><summary>Original (deferred) checkpoint task — for reference only, not to be implemented</summary>
 
 Implement the mechanism Task 1 chose (Project Alternatives `New Alternative…`, else `Save A Copy As…`).
 
@@ -626,25 +635,47 @@ func makeCheckpoint(_ daemon: Daemon, label: String) async throws {
 
 - [ ] **Step 4: Run — passes. Step 5: full suite + commit** (`feat(ax): checkpoint via <chosen mechanism>`).
 
+</details>
+
 ---
 
-## Task 6: `delete_track` (+ auto-checkpoint guard)
+## Task 6: `delete_track` (undo-based safety — NO auto-checkpoint)
 
 **Files:** Modify `StructureTools.swift`, `StructureToolTests.swift`.
 
-- [ ] **Step 1: Tests** — (a) delete removes the strip on re-read; (b) delete AUTO-CHECKPOINTS first (assert a checkpoint was taken before the delete — model via a spy/flag on the fake, or assert the checkpoint menu path was pressed before the delete path); (c) if checkpoint fails, delete REFUSES (throws, strip still present).
+**Safety change from the spec:** checkpoint is unavailable (Task 1 finding), so `delete_track` does
+NOT auto-checkpoint. It performs the delete and verifies by re-read; reversibility is provided by
+Logic-native `Edit ▸ Undo`, which `AXMenuDriver` can drive. Expose a small structural-undo so the
+delete is agent-reversible.
+
+- [ ] **Step 1: Tests** — (a) delete selects the target then presses `Track ▸ Delete Track` and the strip is gone on re-read; (b) delete of an unknown track throws `layer:"ax"` (via `find`); (c) a small `UndoStructuralTool` presses `Edit ▸ Undo` and (modeled in the fake) restores a just-deleted strip.
 
 ```swift
-    func testDeleteTrackRemovesStripAfterCheckpoint() async throws { /* press order: checkpoint then delete; strip gone */ }
-    func testDeleteRefusesWhenCheckpointFails() async throws { /* checkpoint sheet absent ⇒ throw, strip remains */ }
+    func testDeleteTrackRemovesStrip() async throws {
+        // fake: press "Delete Track" removes the selected strip from the mixer area
+        let d = await daemon(providerDeletable("scratch"))
+        _ = try await d.axMixer.syncTracks()
+        let r = try await DeleteTrackTool(daemon: d).invoke(["name": .string("scratch")])
+        guard case .object(let o) = r else { return XCTFail() }
+        XCTAssertEqual(o["deleted"], .string("scratch"))
+        XCTAssertFalse((try await currentTrackNames(d)).contains("scratch"))
+    }
+    func testUndoStructuralRestores() async throws {
+        // fake: press "Undo" re-adds the last removed strip
+        let d = await daemon(providerDeletableWithUndo("scratch"))
+        _ = try await d.axMixer.syncTracks()
+        _ = try await DeleteTrackTool(daemon: d).invoke(["name": .string("scratch")])
+        _ = try await UndoStructuralTool(daemon: d).invoke([:])
+        XCTAssertTrue((try await currentTrackNames(d)).contains("scratch"))
+    }
 ```
 
-- [ ] **Step 2: Run — fails. Step 3: Implement `DeleteTrackTool`:**
+- [ ] **Step 2: Run — fails. Step 3: Implement `DeleteTrackTool` + `UndoStructuralTool` (undo-based safety):**
 
 ```swift
 public struct DeleteTrackTool: LogicTool {
     public let name = "delete_track"
-    public let description = "Delete a track. AUTO-CHECKPOINTS first and refuses if it cannot snapshot. Verified by re-reading the mixer."
+    public let description = "Delete a track. Reversible via Logic-native undo (call undo_structural to restore). Verified by re-reading the mixer."
     public let inputSchema: Value = .object([
         "type": .string("object"),
         "properties": .object(["name": .object(["type": .string("string")])]),
@@ -653,12 +684,8 @@ public struct DeleteTrackTool: LogicTool {
     let daemon: Daemon
     public func invoke(_ args: [String: Value]) async throws -> Value {
         let name = try requireString(args, "name", tool: name)
-        let strip = try await daemon.ax.find(name)             // throws if unknown
+        let strip = try await daemon.ax.find(name)             // throws layer:"ax" if unknown
         let resolved = await daemon.ax.read(strip).name
-        // SAFETY: snapshot before destroying. Refuse if it fails.
-        do { try await makeCheckpoint(daemon, label: "before delete \(resolved)") }
-        catch { throw ToolFailure(error: "refusing to delete without a checkpoint", layer: "ax",
-                                  expected: "a successful checkpoint", observed: "checkpoint failed: \(error)") }
         try await daemon.menu.pressElement(strip)              // select the target
         try await daemon.menu.pressMenuPath(["Track", "Delete Track"])
         let after = try await currentTrackNames(daemon)
@@ -666,12 +693,26 @@ public struct DeleteTrackTool: LogicTool {
             throw ToolFailure(error: "delete not confirmed", layer: "ax",
                               expected: "'\(resolved)' gone", observed: "still present")
         }
-        return .object(["deleted": .string(resolved)])
+        return .object(["deleted": .string(resolved), "reversible": .string("call undo_structural")])
+    }
+}
+
+public struct UndoStructuralTool: LogicTool {
+    public let name = "undo_structural"
+    public let description = "Undo the last structural edit via Logic's Edit ▸ Undo (e.g. reverse a delete_track/create_track)."
+    public let inputSchema: Value = .object(["type": .string("object"), "properties": .object([:])])
+    let daemon: Daemon
+    public func invoke(_ args: [String: Value]) async throws -> Value {
+        try await daemon.menu.pressMenuPath(["Edit", "Undo"])
+        return .object(["undone": .bool(true)])
     }
 }
 ```
+The `providerDeletable*` fakes model the effect: a pressed "Delete Track" removes the selected
+strip from the mixer `AXLayoutArea`; a pressed "Undo" re-appends it. Use `FakeAXNode.onPress` (Task
+2) to wire those effects, mirroring how Task 3's fake models "New Audio Track adds a strip".
 
-- [ ] **Step 4: Run — passes. Step 5: full suite + commit** (`feat(ax): delete_track with auto-checkpoint safety`).
+- [ ] **Step 4: Run — passes. Step 5: register `DeleteTrackTool`/`UndoStructuralTool`, full suite + commit** (`feat(ax): delete_track (undo-based safety) + undo_structural`).
 
 ---
 
@@ -762,15 +803,15 @@ public struct InsertPluginTool: LogicTool {
 - [ ] **Step 1: Confirm all structure tools are registered** in `Daemon.registerAllTools`.
 
 - [ ] **Step 2: Add a net-zero structural smoke** to `Smoke.swift` (a `structure` subcommand arg) that, against real Logic backgrounded:
-  1. `checkpoint("smoke")` — confirm a snapshot was taken.
-  2. `create_track(kind:"audio", name:"__smoke_tmp")` — confirm it appears.
-  3. `rename_track("__smoke_tmp", "__smoke_ren")` — confirm.
-  4. `set_output("__smoke_ren", <a bus>)` — confirm.
-  5. `insert_plugin("__smoke_ren", name:<stock plugin, e.g. "Channel EQ">)` — confirm.
-  6. `select_track("vox")` — confirm.
-  7. `delete_track("__smoke_ren")` — confirm it auto-checkpointed and the strip is gone (RESTORES net-zero).
+  1. `create_track(kind:"audio", name:"__smoke_tmp")` — confirm it appears.
+  2. `rename_track("__smoke_tmp", "__smoke_ren")` — confirm.
+  3. `set_output("__smoke_ren", <a bus>)` — confirm.
+  4. `insert_plugin("__smoke_ren", name:<stock plugin, e.g. "Channel EQ">)` — confirm.
+  5. `select_track("vox")` — confirm.
+  6. `delete_track("__smoke_ren")` — confirm the strip is gone (RESTORES net-zero; create+delete cancels out).
+  7. `undo_structural()` sanity — confirm `Edit ▸ Undo` is drivable (then redo/clean so the project ends net-zero).
   8. Focus check: Logic never frontmost.
-  Print PASS/observed per step; clean up the checkpoint alternative/copy if the mechanism created one.
+  Print PASS/observed per step. No checkpoint step (deferred — Task 1 finding).
 
 - [ ] **Step 3: (CONTROLLER) Run the structural smoke against real Logic**, record results in `docs/integration-smoke.md`'s log (dated), and note any bug the fake couldn't catch (Phase 2's smoke found three — expect structural-op timing/async surprises).
 

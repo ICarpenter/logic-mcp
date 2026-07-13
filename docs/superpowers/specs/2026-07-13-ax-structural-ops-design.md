@@ -115,22 +115,31 @@ No new verification machinery; the tools return verified ground truth by constru
 | `select_track(name)` | `AXPress` the track header / strip (Phase 2 exposes both) | selection reflected |
 | `insert_plugin(track, slot, name)` | strip plugin-slot popup → category → plugin, OR `Mix → Search and Add Plug-in…` (probe decides which is reliable) | `AXBridge.pluginGroups` shows it |
 | `set_output(track, dest)` | strip output-routing popup → dest | strip output description == dest |
-| `checkpoint(label)` | `File → Project Alternatives → New Alternative…` (fallback `Save A Copy As…`) | alternative/copy exists |
+| `undo_structural()` | `Edit → Undo` (the structural-safety reversal; also reverses `create_track`) | re-read shows the reversal |
+| ~~`checkpoint(label)`~~ | **DEFERRED** — Save/Alternatives disabled in Logic (see Safety model) | — |
 
 MCP argument shapes follow the existing tools' conventions (`ToolFailure(layer:"ax")` on failure,
 structured errors, never fabricate).
 
 ## Safety model — the spine of this phase
 
-Structural ops create and destroy, so safety is first-class (mixing could always be nudged back):
+Structural ops create and destroy, so safety is first-class (mixing could always be nudged back).
 
-- **`checkpoint(label)`** snapshots the project. Primary: `Project Alternatives → New Alternative…`.
-  If unavailable (see Open Questions), fallback: `Save A Copy As…` to a timestamped copy. The phase
-  must ship *a* working snapshot.
-- **Auto-checkpoint before destructive ops.** `delete_track` creates a checkpoint if none exists for
-  the current turn and refuses to run if it cannot. (Matches the original spec's safety model.)
-- **Undo path.** Prefer Logic-native `Edit → Undo` (`⌘Z`) for structural ops (the menu exposes it),
-  verified by re-read; fall back to checkpoint revert. The MCU-era `UndoJournal` stays for mix ops.
+**RESOLVED 2026-07-13 (real-Logic probe → undo-based safety).** The intended `checkpoint(label)`
+snapshot is NOT buildable this phase: `File ▸ Save`, `Save As…`, `Save A Copy As…`, AND
+`Project Alternatives` are all **disabled** in Logic (confirmed after opening the File menu — real,
+not stale). Both the primary and the fallback checkpoint mechanisms are unavailable. However,
+**`Edit ▸ Undo` works for structural ops** — proven: `Track ▸ New Audio Track` created a strip
+(20→21, Logic backgrounded), `Edit ▸ Undo` restored it (21→20). So the safety model is:
+
+- **Logic-native undo is the safety mechanism.** `delete_track` (the one destructive tool) performs
+  the delete and is **reversible via `Edit ▸ Undo`**, which `AXMenuDriver` drives; exposed as a small
+  `undo_structural` tool so the agent can reverse a structural edit. No auto-checkpoint (there is no
+  snapshot to take).
+- **`checkpoint(label)` is DEFERRED** to a later phase (revisit if a project state/format re-enables
+  saves). The MCU-era `UndoJournal` still serves mix ops.
+- `delete_track`'s contract states it is reversible via `undo_structural`; it verifies the delete by
+  re-read and returns structured errors, never destroying silently.
 
 ## Verification contract
 
@@ -140,10 +149,9 @@ after the action (via `AXMixer`/`AXBridge`). If the post-op read does not reflec
 
 ## Open questions — resolved in the plan's first task (Phase 2 fixture-capture pattern)
 
-1. **Is `checkpoint` viable via `Project Alternatives`?** The probe showed it **disabled** (as were
-   `Save`/`Save As`, consistent with a no-unsaved-changes / project-format state). The plan's first
-   task drives it on a scratch project to confirm it enables, else adopts the `Save A Copy As…`
-   fallback. The safety model requires a working checkpoint before any destructive tool ships.
+1. **~~Is `checkpoint` viable?~~ RESOLVED — no.** Task 1's probe confirmed `Save`/`Save As…`/
+   `Save A Copy As…`/`Project Alternatives` are all disabled (checked with the File menu open).
+   Checkpoint is deferred; safety is undo-based (`Edit ▸ Undo`, proven working). See Safety model.
 2. **Popup/dialog AX layouts**, captured as fixtures (extend `logic-mcp axdump`) before tool code:
    the `New Tracks…` sheet (fields + Create button), the plugin-insert popup vs `Search and Add
    Plug-in…` (which is reliably AX-navigable), and the output-routing popup (bus/output item titles).
