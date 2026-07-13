@@ -1,3 +1,4 @@
+import Foundation
 import MCP
 
 public struct CreateTrackTool: LogicTool {
@@ -24,8 +25,10 @@ public struct CreateTrackTool: LogicTool {
         }
         let before = Set(try await currentTrackNames(daemon))
         try await daemon.menu.pressMenuPath(["Track", item])
-        // Verify: a new strip appeared.
-        let after = try await currentTrackNames(daemon)
+        // Verify: a new strip appeared. Logic's AX tree updates ASYNCHRONOUSLY after a menu
+        // press (real-Logic probe: ~700ms before a new strip was visible), so an immediate
+        // re-read routinely misses it — settle-poll instead of trusting a single read.
+        let after = try await settleTracks(daemon) { names in names.contains { !before.contains($0) } }
         guard let created = after.first(where: { !before.contains($0) }) else {
             throw ToolFailure(error: "track creation not confirmed", layer: "ax",
                               expected: "a new strip after '\(item)'", observed: "mixer unchanged")
@@ -61,6 +64,25 @@ public struct SelectTrackTool: LogicTool {
 // Shared helpers used across structure tools.
 func currentTrackNames(_ daemon: Daemon) async throws -> [String] {
     try await daemon.axMixer.syncTracks()
+}
+
+/// Poll the mixer (re-reading via AX) until `condition` holds on the track-name list, or the
+/// deadline passes. Logic's AX tree updates ASYNCHRONOUSLY after a menu press — an immediate
+/// re-read routinely misses the change (real-Logic probe: a new track took ~700ms to appear).
+/// Returns the final names. Polls every 50ms for up to `timeout`. Generic over `condition` so
+/// it covers both "a new name appeared" (create_track) and "a name disappeared" (delete_track).
+@discardableResult
+func settleTracks(_ daemon: Daemon, timeout: Duration = .seconds(3),
+                  until condition: ([String]) -> Bool) async throws -> [String] {
+    var names = try await currentTrackNames(daemon)
+    if condition(names) { return names }
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        try? await Task.sleep(for: .milliseconds(50))
+        names = try await currentTrackNames(daemon)
+        if condition(names) { return names }
+    }
+    return names
 }
 
 /// Rename a track by name via AX. Stubbed here; Task 4 wires the real implementation

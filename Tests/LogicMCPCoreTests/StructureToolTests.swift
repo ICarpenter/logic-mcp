@@ -36,4 +36,48 @@ final class StructureToolTests: XCTestCase {
         do { _ = try await CreateTrackTool(daemon: d).invoke(["kind": .string("banjo")]); XCTFail() }
         catch let f as ToolFailure { XCTAssertEqual(f.layer, "daemon") }
     }
+
+    /// Regression test for the settle-poll fix: Logic's AX tree updates ASYNCHRONOUSLY after a
+    /// menu press (real-Logic probe: ~700ms before a new strip was visible), so `create_track`
+    /// must not trust a single immediate re-read. This fake models that lag directly: the new
+    /// "Audio 1" strip is scheduled via `scheduleChildAppend(_:afterReads:)` and stays invisible
+    /// to `children(of: area)` reads for 2 reads after the press, becoming visible only on the
+    /// 3rd. Against the pre-fix immediate-read code this test FAILS with "track creation not
+    /// confirmed" (verified by stashing the fix); the settle-poll waits it out and succeeds.
+    func testCreateTrackWaitsForAsyncStripAppearance() async throws {
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [
+            FakeAXNode(role: "AXLayoutItem", description: "vox"),
+        ])
+        let window = FakeAXNode(role: "AXWindow", children: [area])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
+        let newAudio = FakeAXNode(role: "AXMenuItem", title: "New Audio Track")
+        newAudio.onPress = {
+            area.scheduleChildAppend(FakeAXNode(role: "AXLayoutItem", description: "Audio 1"), afterReads: 2)
+        }
+        let menu = FakeAXNode(role: "AXMenu", children: [newAudio])
+        p.menuBarNode = FakeAXNode(role: "AXMenuBar",
+            children: [FakeAXNode(role: "AXMenuBarItem", title: "Track", children: [menu])])
+        let d = await daemon(p)
+        let r = try await CreateTrackTool(daemon: d).invoke(["kind": .string("audio")])
+        guard case .object(let o) = r else { return XCTFail() }
+        XCTAssertEqual(o["created"], .bool(true))
+        XCTAssertEqual(o["track"], .string("Audio 1"))
+    }
+
+    /// select_track had zero coverage before this. Confirms it resolves case-insensitively /
+    /// by unique prefix, actually performs an AXPress on the resolved strip (not just a find()),
+    /// and returns the resolved (canonical) name rather than echoing the input.
+    func testSelectTrackPressesAndReturnsResolvedName() async throws {
+        let vox = FakeAXNode(role: "AXLayoutItem", description: "Vocals")
+        var pressed = false
+        vox.onPress = { pressed = true }
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [vox])
+        let window = FakeAXNode(role: "AXWindow", children: [area])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
+        let d = await daemon(p)
+        let r = try await SelectTrackTool(daemon: d).invoke(["name": .string("vo")])
+        guard case .object(let o) = r else { return XCTFail() }
+        XCTAssertEqual(o["selected"], .string("Vocals"))
+        XCTAssertTrue(pressed, "select_track should press the resolved strip")
+    }
 }

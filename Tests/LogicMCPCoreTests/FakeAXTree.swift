@@ -41,6 +41,13 @@ final class FakeAXNode {
     /// Test-only hook fired on `.press` (after any AXSwitch flip / window open-close behavior)
     /// so a pressed menu item can mutate the fake tree — e.g. "New Audio Track adds a strip".
     var onPress: (() -> Void)?
+    /// Models Logic's ASYNCHRONOUS AX-tree structural update after a menu press (e.g. a new
+    /// mixer strip appearing): a child scheduled via `scheduleChildAppend(_:afterReads:)` is
+    /// held back from `children` until this many subsequent `children(of:)` reads on THIS node
+    /// have occurred — same countdown shape as `pressLatency`/`setValueLatency` above, just keyed
+    /// to a structural read instead of a value attribute read.
+    private var pendingChildAppend: FakeAXNode?
+    private var childAppendCountdown = 0
 
     init(role: String, subrole: String? = nil, description: String? = nil,
          title: String? = nil, stringValue: String? = nil, value: Double? = nil,
@@ -108,6 +115,34 @@ final class FakeAXNode {
             numberValue = new
         }
     }
+
+    /// Schedule `child` to be appended to `children`, but only revealed after `afterReads`
+    /// subsequent `children(of:)` reads on this node (see `readChildrenForLatency()`). Zero
+    /// appends immediately — the old synchronous "onPress mutates .children directly" shape
+    /// every other structural-ops test still uses.
+    func scheduleChildAppend(_ child: FakeAXNode, afterReads: Int) {
+        if afterReads <= 0 {
+            children.append(child)
+        } else {
+            pendingChildAppend = child
+            childAppendCountdown = afterReads
+        }
+    }
+
+    /// Called by the provider's `children(of:)` on this node. If an append is pending latency,
+    /// decrements the countdown and keeps returning the stale (pre-append) list; the pending
+    /// child is appended and revealed only once the countdown reaches 0 — same shape as
+    /// `readValueForLatency()`/`readNumberForLatency()` above, applied to a structural read.
+    func readChildrenForLatency() -> [FakeAXNode] {
+        guard let pending = pendingChildAppend else { return children }
+        if childAppendCountdown > 0 {
+            childAppendCountdown -= 1
+            return children   // still stale — pending strip not yet visible
+        }
+        children.append(pending)
+        pendingChildAppend = nil
+        return children
+    }
 }
 
 final class FakeAXProvider: AXProvider, @unchecked Sendable {
@@ -144,7 +179,7 @@ final class FakeAXProvider: AXProvider, @unchecked Sendable {
         rootNode.children.filter { $0.role == "AXWindow" }.map { AXHandle(fake: $0) }
     }
     func children(of h: AXHandle) -> [AXHandle] {
-        let kids = node(h)?.children ?? []
+        let kids = node(h)?.readChildrenForLatency() ?? []
         // Self-healing index: a node appended to the tree after construction (e.g. by an
         // `onPress` hook mutating `.children` directly, as structural-ops tests do to model
         // "New Audio Track adds a strip") isn't in `byHandle` yet — index it (and its
