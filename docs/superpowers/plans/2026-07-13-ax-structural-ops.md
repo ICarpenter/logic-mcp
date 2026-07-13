@@ -505,9 +505,61 @@ git commit -m "feat(ax): create_track (direct kinds) + select_track via AXMenuDr
 
 ---
 
-## Task 4: `rename_track`
+## Task 4 (REVISED): `rename_track` → deferred structured error; drop `create_track`'s `name`; FIX `AXBridge.mixerArea()`
 
-**Files:** Modify `StructureTools.swift`, `StructureToolTests.swift`.
+**Superseded by a controller probe** — see `Fixtures/ax/rename.txt`. Renaming is **NOT achievable via
+no-focus AX**: all three name fields either aren't settable, or (the Inspector's) accept the value
+cosmetically while the edit never commits to the track (AXSetValue doesn't open a real AppKit edit
+session; committing needs real keystrokes ⇒ focus). User decision (2026-07-13): **defer rename**,
+keep the no-focus invariant absolute.
+
+**Files:** Modify `Sources/LogicMCPCore/Tools/StructureTools.swift`,
+`Sources/LogicMCPCore/AX/AXBridge.swift`, `Tests/LogicMCPCoreTests/StructureToolTests.swift`,
+`Tests/LogicMCPCoreTests/AXBridgeTests.swift`.
+
+### 4a. `rename_track` — structured "not available" error (the Phase-2 `set_send` pattern)
+
+- [ ] Test: `rename_track` throws `ToolFailure(layer:"ax")` whose `error` contains "not available";
+      an unknown track name still errors first (via `daemon.ax.find`, also `layer:"ax"`).
+- [ ] Implement `RenameTrackTool`: validate args, resolve the strip via `daemon.ax.find` (so a bad
+      name gives the precise error), then throw:
+```swift
+throw ToolFailure(
+    error: "renaming a track is not available via AX in this release",
+    layer: "ax",
+    expected: "rename '\(resolved)' in Logic directly",
+    observed: "Logic's track-name fields are not AX-committable — AXSetValue changes the field cosmetically but never commits the edit (see Fixtures/ax/rename.txt)")
+```
+- [ ] Register it so callers get the clear error rather than "unknown tool".
+
+### 4b. `create_track` — DROP the inert `name` argument
+
+- [ ] Remove `name` from `CreateTrackTool`'s `inputSchema` and its implementation; delete the
+      `renameTrackAX` stub and its `try?` fallback (it silently ignored `name`, which is dishonest).
+- [ ] Update the tool description: "Logic assigns the default name (e.g. 'Audio 1'); renaming is not
+      available via AX in this release."
+- [ ] Update/replace any test that passed `name` to `create_track`.
+
+### 4c. FIX `AXBridge.mixerArea()` — it can bind to the Inspector's MINI-MIXER (Phase 2 latent bug)
+
+`mixerArea()` DFS's every window for the FIRST `AXLayoutArea desc="Mixer"`. The ARRANGE window's
+Inspector contains a mini-mixer with the SAME role+description showing only the selected track's
+strip (+ its output) — e.g. `["vox","Aux 1"]` instead of all 20 strips. It works today only because
+the Mixer window happens to come first in `windows()`. If window order shifts, `refresh_state` reads
+1–2 strips instead of 20 — this project's "wrong view" bug class.
+
+- [ ] Test (`AXBridgeTests`): a fake with TWO `AXLayoutArea desc="Mixer"` areas — a 2-strip one
+      (Inspector, in a window titled "… - Tracks") and a 20-strip one (in "… - Mixer: Tracks") —
+      and assert `stripHandles()` returns the 20-strip set REGARDLESS of window order (test both
+      orders). This test must FAIL against the current first-match implementation.
+- [ ] Fix: choose the mixer area with the MOST `AXLayoutItem` children (ties → the one whose
+      containing window title contains "Mixer"). Keep the existing "no mixer surface" structured
+      error when none exists.
+
+- [ ] Run focused tests → GREEN, then FULL suite, then commit
+      (`fix(ax): defer rename_track; drop create_track name; mixerArea must not bind the Inspector mini-mixer`).
+
+<details><summary>Original (superseded) rename task — reference only, DO NOT implement</summary>
 
 Rename path depends on Task 1's finding — whether the strip's `AXTextField desc="name"` is AXValue-**settable**. Task 1 recorded it. Implement accordingly:
 
@@ -570,6 +622,8 @@ func renameTrackAX(_ daemon: Daemon, from: String, to: String) async throws -> S
 Add to `AXBridge` (Task-2-adjacent; it already wraps the provider): `public func setValueString(_ s: String, of h: AXHandle) throws { try p.setString(s, of: h) }`.
 
 - [ ] **Step 4: Run — passes. Step 5: full suite + commit** (`feat(ax): rename_track`).
+
+</details>
 
 ---
 
