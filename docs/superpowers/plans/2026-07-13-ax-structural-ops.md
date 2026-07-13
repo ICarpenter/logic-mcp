@@ -770,9 +770,45 @@ strip from the mixer `AXLayoutArea`; a pressed "Undo" re-appends it. Use `FakeAX
 
 ---
 
-## Task 7: `set_output` (routing popup)
+## Task 7: `set_output` (routing popup — NESTED)
 
-**Files:** Modify `StructureTools.swift`, `StructureToolTests.swift`. Uses `popup_output.txt` (Task 1).
+**Files:** Modify `StructureTools.swift`, `AXMenuDriver.swift`, `StructureToolTests.swift`.
+**Fixture (captured):** `Tests/LogicMCPCoreTests/Fixtures/ax/popup_output.txt` — READ IT FIRST.
+
+**Key correction from the captured fixture:** the routing popup is **nested**, not a flat item list.
+Top level holds `No Output`, `Output ▸`(submenu), `Bus ▸`(submenu), and pan-mode items
+(`Stereo Pan`/`Balance`/`Binaural Panner` — NOT destinations). Real destinations are LEAVES one
+submenu deep: `["Bus","Bus 3"]`, `["Output","Stereo Output"]`. The output button supports **`AXPress`
+only** (`AXShowMenu` is unsupported — returns actionUnsupported). The popup's `AXMenu` tree is
+statically readable with Logic backgrounded, like the menu bar.
+
+So `selectPopupItem(from:path:)` (flat) is NOT the right primitive here. Add to `AXMenuDriver`:
+
+```swift
+    /// Open `control`'s popup and press the LEAF whose title matches `title` — searching the popup's
+    /// menu tree at top level OR one submenu deep (Logic's routing popup nests destinations under
+    /// "Output ▸" / "Bus ▸"; see Fixtures/ax/popup_output.txt). Dismisses the popup on a miss so
+    /// nothing is left hanging. The control supports AXPress only (no AXShowMenu).
+    public func selectPopupLeaf(from control: AXHandle, title: String) async throws {
+        try p.perform(.press, on: control)          // opens the popup (AXShowMenu is unsupported)
+        try? await Task.sleep(for: .milliseconds(60))
+        // Collect candidate leaves: top-level items + items one submenu deep.
+        var leaves: [AXHandle] = []
+        for item in menuItems(under: control) {
+            leaves.append(item)
+            leaves.append(contentsOf: menuItems(under: item))   // one level of submenu
+        }
+        guard let hit = leaves.first(where: {
+            (p.string(.title, of: $0) ?? "").caseInsensitiveCompare(title) == .orderedSame
+        }) else {
+            try? p.perform(.cancel, on: control)
+            throw ToolFailure(error: "no routing destination '\(title)'", layer: "ax",
+                              expected: "a bus/output leaf in the popup",
+                              observed: "available: \(leaves.compactMap { p.string(.title, of: $0) }.filter { !$0.isEmpty }.joined(separator: ", "))")
+        }
+        try p.perform(.press, on: hit)
+    }
+```
 
 - [ ] **Step 1: Test** — a fake strip whose output button opens a popup with items ("Bus 1"…"Stereo Out"); `set_output(track,"Bus 3")` selects it and re-read shows output "Bus 3". Model the popup + the press updating the strip's output description.
 - [ ] **Step 2: Run — fails. Step 3: Implement** `SetOutputTool`:
@@ -792,7 +828,7 @@ public struct SetOutputTool: LogicTool {
             throw ToolFailure(error: "no output slot on '\(track)'", layer: "ax",
                               expected: "the output-routing button", observed: "none")
         }
-        try await daemon.menu.selectPopupItem(from: outBtn, path: [dest])
+        try await daemon.menu.selectPopupLeaf(from: outBtn, title: dest)   // nested popup — see fixture
         let now = await daemon.ax.read(strip).output
         guard now?.caseInsensitiveCompare(dest) == .orderedSame else {
             throw ToolFailure(error: "output change not confirmed", layer: "ax",
