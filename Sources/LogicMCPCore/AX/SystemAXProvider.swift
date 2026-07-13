@@ -36,6 +36,13 @@ public final class SystemAXProvider: AXProvider, @unchecked Sendable {
               let arr = v as? [AXUIElement] else { return [] }
         return arr.map { AXHandle(system: $0) }
     }
+    public func menuBar() -> AXHandle? {
+        guard let app else { return nil }
+        var v: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXMenuBarAttribute as CFString, &v) == .success,
+              let mb = v else { return nil }
+        return AXHandle(system: mb as! AXUIElement)
+    }
     public func children(of h: AXHandle) -> [AXHandle] {
         var v: CFTypeRef?
         guard AXUIElementCopyAttributeValue(raw(h), kAXChildrenAttribute as CFString, &v) == .success,

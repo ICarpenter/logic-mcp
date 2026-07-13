@@ -7,7 +7,7 @@ struct AXDump: AsyncParsableCommand {
         commandName: "axdump",
         abstract: "Dump Logic's accessibility tree (AX analog of lcdprobe). Read-only walk.")
 
-    @Argument(help: "mode: tree | strip <name> | plugin <name> <slot> | send <name>")
+    @Argument(help: "mode: tree | strip <name> | plugin <name> <slot> | send <name> | menu <name>")
     var args: [String] = ["tree"]
 
     func run() async throws {
@@ -25,6 +25,15 @@ struct AXDump: AsyncParsableCommand {
             print("Open the plugin window in Logic first, then run `axdump tree` and locate")
             print("the plugin window; this mode just re-dumps all windows for capture:")
             for w in p.windows() { dump(p, w, depth: 0, maxDepth: 6) }
+        case "menu":
+            guard args.count >= 2 else { print("usage: axdump menu <Track|File|Mix|Edit>"); return }
+            guard let mb = p.menuBar() else { print("no menu bar"); return }
+            let name = args[1]
+            guard let item = p.children(of: mb).first(where: { p.string(.title, of: $0) == name }) else {
+                print("menu '\(name)' not found"); return
+            }
+            // AXMenuBarItem → AXMenu → AXMenuItems
+            for sub in p.children(of: item) { dump(p, sub, depth: 0, maxDepth: 3) }
         default:
             print("unknown mode '\(mode)'")
         }
