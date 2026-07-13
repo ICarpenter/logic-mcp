@@ -7,13 +7,27 @@ import MCP
 /// Drive the AX mixer tools against REAL Logic and print results. Uses an InMemoryWire (the AX
 /// tools ignore it) so it needs no CoreMIDI port and can run alongside `serve`. Never activates
 /// Logic. Mutates and RESTORES vox's volume/pan/mute and one plugin param (net-zero, best effort).
+///
+/// `--structure` instead drives the STRUCTURAL tools (create_track/set_output/insert_plugin/
+/// select_track/delete_track/undo_structural) against a scratch track, net-zero by construction —
+/// see `runStructural`'s final safety-net cleanup.
 struct Smoke: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "smoke", abstract: "Drive the AX mixer tools against real Logic (net-zero).")
+        commandName: "smoke", abstract: "Drive the AX tools against real Logic (net-zero).")
 
     @Option(name: .long, help: "Track to exercise.") var track = "vox"
+    @Flag(name: .long, help: "Run the structural smoke (create_track → set_output → insert_plugin → select_track → delete_track → undo_structural → delete_track) instead of the mixer smoke.")
+    var structure = false
 
     func run() async throws {
+        if structure {
+            try await runStructural()
+        } else {
+            try await runMixer()
+        }
+    }
+
+    private func runMixer() async throws {
         let front0 = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
         let provider = try SystemAXProvider()
         let (daemonEnd, _) = InMemoryWire.pair()
@@ -87,5 +101,177 @@ struct Smoke: AsyncParsableCommand {
 
         let front1 = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
         print("\n=== FOCUS CHECK ===\n    frontmost before=\(front0)  after=\(front1)  (Logic must NOT appear here)")
+    }
+
+    // MARK: - Structural smoke
+
+    /// Net-zero structural smoke: create a scratch track, route it, insert a plugin on it, select
+    /// another track, delete the scratch track, undo the delete (proving Logic-native undo is
+    /// drivable), then delete it again for final cleanup. `create_track` has NO `name` argument
+    /// (rename is deferred — AX text edits never commit, see `RenameTrackTool`), so the scratch
+    /// track is whatever Logic names it (e.g. "Audio 1") and every step below resolves it by name
+    /// from the PREVIOUS step's own confirmation rather than assuming one.
+    ///
+    /// Every "confirm" is a fresh `refresh_state` re-read (never trusted from a single tool's own
+    /// JSON alone — matches this codebase's settle-poll philosophy: AX updates land
+    /// asynchronously, so a tool's self-report and ground truth can momentarily disagree). A final
+    /// safety-net diff against the step-1 snapshot force-deletes ANYTHING left over that wasn't
+    /// there originally, regardless of which step above failed — that diff, not the step-by-step
+    /// narrative, is what actually guarantees no stray "Audio N" track survives a half-failed run.
+    /// There is no checkpoint step (checkpoint is deferred — Logic's Save/Alternatives are
+    /// disabled) and no rename step (deferred).
+    private func runStructural() async throws {
+        let front0 = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
+        let provider = try SystemAXProvider()
+        let (daemonEnd, _) = InMemoryWire.pair()
+        let daemon = await Daemon(wire: daemonEnd, axProvider: provider)
+        let reg = ToolRegistry()
+        await daemon.registerAllTools(in: reg)
+
+        @discardableResult
+        func call(_ name: String, _ args: [String: Value] = [:]) async -> (text: String, isError: Bool) {
+            let r = await reg.call(name: name, arguments: args)
+            let text = r.content.compactMap { if case .text(let t, _, _) = $0 { return t } else { return nil } }.joined()
+            let a = args.isEmpty ? "" : " " + args.map { "\($0)=\($1)" }.joined(separator: " ")
+            let err = r.isError ?? false
+            print("→ \(name)\(a)\n    \(text)\(err ? "   [isError]" : "")")
+            return (text, err)
+        }
+        func header(_ s: String) { print("\n=== \(s) ===") }
+
+        var allPass = true
+        func checkpoint(_ ok: Bool, _ label: String) {
+            print("    \(ok ? "PASS" : "FAIL"): \(label)")
+            if !ok { allPass = false }
+        }
+
+        // Pull one top-level string field out of a tool's JSON object response — same
+        // no-JSON-dependency approach as runMixer's `field` helper above, specialized to strings
+        // (every field this smoke reads — track/output/plugin/selected/deleted — is a string).
+        func stringField(_ json: String, _ key: String) -> String? {
+            guard let r = json.range(of: "\"\(key)\":\"") else { return nil }
+            let after = json[r.upperBound...]
+            guard let end = after.firstIndex(of: "\"") else { return nil }
+            return String(after[..<end])
+        }
+        // `refresh_state`'s payload is a `tracks` ARRAY of objects that each carry a `name` field —
+        // pull out every one, in order.
+        func trackNames(_ json: String) -> [String] {
+            var names: [String] = []
+            var rest = Substring(json)
+            while let r = rest.range(of: "\"name\":\"") {
+                let after = rest[r.upperBound...]
+                guard let end = after.firstIndex(of: "\"") else { break }
+                names.append(String(after[..<end]))
+                rest = after[end...]
+            }
+            return names
+        }
+        func snapshotNames() async -> [String] { trackNames(await call("refresh_state").text) }
+
+        header("1. refresh_state — snapshot before")
+        let names0 = await snapshotNames()
+        print("    \(names0.count) tracks: \(names0)")
+
+        header("2. create_track kind:audio")
+        let createResp = await call("create_track", ["kind": .string("audio")])
+        var newTrack = stringField(createResp.text, "track")
+        // Defensive cross-check independent of create_track's own self-report: diff a fresh
+        // refresh_state against the step-1 snapshot. This diff — not the "track" field above — is
+        // what the safety-net cleanup at the end keys off, so it must stand on its own even if the
+        // tool's JSON were malformed or its own confirmation timed out.
+        let namesAfterCreate = await snapshotNames()
+        let diffCreated = namesAfterCreate.filter { !names0.contains($0) }
+        if newTrack == nil { newTrack = diffCreated.first }
+        checkpoint(newTrack != nil && !createResp.isError,
+                   "new strip appeared (tool ok=\(!createResp.isError), diff-detected=\(diffCreated))")
+        if diffCreated.count > 1 {
+            print("    WARNING: more than one new track detected: \(diffCreated) — safety-net cleanup will attempt ALL of them")
+        }
+
+        if let scratch = newTrack {
+            print("    scratch track: \(scratch)")
+
+            header("3. set_output track:\(scratch) dest:'Bus 3'")
+            let outResp = await call("set_output", ["track": .string(scratch), "dest": .string("Bus 3")])
+            checkpoint(!outResp.isError && stringField(outResp.text, "output")?.caseInsensitiveCompare("Bus 3") == .orderedSame,
+                       "output is Bus 3")
+
+            header("4. insert_plugin track:\(scratch) name:'Channel EQ'")
+            let pluginResp = await call("insert_plugin", ["track": .string(scratch), "name": .string("Channel EQ")])
+            checkpoint(!pluginResp.isError && stringField(pluginResp.text, "plugin")?.caseInsensitiveCompare("Channel EQ") == .orderedSame,
+                       "Channel EQ present on strip")
+        } else {
+            print("    SKIPPING set_output/insert_plugin — no new track to act on")
+        }
+
+        header("5. select_track name:\(track)")
+        let selectResp = await call("select_track", ["name": .string(track)])
+        checkpoint(!selectResp.isError && stringField(selectResp.text, "selected") != nil, "selected '\(track)'")
+
+        var scratchRestoredAfterUndo = false
+        if let scratch = newTrack {
+            header("6. delete_track name:\(scratch)")
+            let del1 = await call("delete_track", ["name": .string(scratch)])
+            checkpoint(!del1.isError && stringField(del1.text, "deleted")?.caseInsensitiveCompare(scratch) == .orderedSame,
+                       "strip gone")
+
+            header("7. undo_structural — should restore \(scratch)")
+            await call("undo_structural")
+            let namesAfterUndo = await snapshotNames()
+            scratchRestoredAfterUndo = namesAfterUndo.contains(scratch)
+            checkpoint(scratchRestoredAfterUndo, "'\(scratch)' back in the mixer after undo")
+
+            header("8. delete_track name:\(scratch)  (final cleanup)")
+            if scratchRestoredAfterUndo {
+                let del2 = await call("delete_track", ["name": .string(scratch)])
+                checkpoint(!del2.isError && stringField(del2.text, "deleted")?.caseInsensitiveCompare(scratch) == .orderedSame,
+                           "strip gone (final)")
+            } else {
+                print("    SKIPPED — '\(scratch)' was not confirmed back after undo (either the undo didn't restore it, or the earlier delete never actually landed and undo reversed something else). Net-zero is still checked by the safety net below.")
+            }
+        } else {
+            print("\n=== 6/7/8. delete_track / undo_structural / delete_track — SKIPPED (no new track from step 2) ===")
+        }
+
+        header("9. refresh_state — confirm net-zero")
+        let namesFinal = await snapshotNames()
+        let netZero = namesFinal.sorted() == names0.sorted()
+        checkpoint(netZero, "final track list matches step-1 snapshot")
+        if !netZero { print("    before: \(names0)\n    after:  \(namesFinal)") }
+
+        // ---- SAFETY-NET CLEANUP ----
+        // Force-delete ANY track present now that wasn't in the step-1 snapshot, regardless of
+        // which numbered step above failed or what undo actually reversed. This — not the
+        // steps'-own bookkeeping — is the actual net-zero guarantee: a half-failed run must not
+        // leave a stray "Audio N" track behind.
+        var leftover = namesFinal.filter { !names0.contains($0) }
+        if !leftover.isEmpty {
+            print("\n!!! CLEANUP: \(leftover.count) stray track(s) detected after the planned sequence: \(leftover) — attempting force-delete !!!")
+            for stray in leftover {
+                let d = await call("delete_track", ["name": .string(stray)])
+                if d.isError { print("    !!! could not delete stray track '\(stray)': \(d.text)") }
+            }
+            leftover = (await snapshotNames()).filter { !names0.contains($0) }
+            if !leftover.isEmpty {
+                print("\n########################################################")
+                print("### MANUAL CLEANUP REQUIRED IN LOGIC — stray track(s) still present: \(leftover)")
+                print("########################################################")
+                allPass = false
+            } else {
+                print("    cleanup succeeded — project is net-zero")
+            }
+        }
+
+        header("10. focus check")
+        let front1 = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
+        checkpoint(front1 == front0, "frontmost app unchanged (before=\(front0) after=\(front1))")
+        if front1.localizedCaseInsensitiveContains("logic") {
+            print("    !!! WARNING: Logic appears frontmost — no-focus invariant violated !!!")
+            allPass = false
+        }
+
+        print("\n=== STRUCTURAL SMOKE RESULT: \(allPass ? "PASS" : "FAIL") ===")
+        if !allPass { throw ExitCode.failure }
     }
 }
