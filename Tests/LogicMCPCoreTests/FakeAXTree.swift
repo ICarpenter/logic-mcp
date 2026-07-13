@@ -144,7 +144,14 @@ final class FakeAXProvider: AXProvider, @unchecked Sendable {
         rootNode.children.filter { $0.role == "AXWindow" }.map { AXHandle(fake: $0) }
     }
     func children(of h: AXHandle) -> [AXHandle] {
-        (node(h)?.children ?? []).map { AXHandle(fake: $0) }
+        let kids = node(h)?.children ?? []
+        // Self-healing index: a node appended to the tree after construction (e.g. by an
+        // `onPress` hook mutating `.children` directly, as structural-ops tests do to model
+        // "New Audio Track adds a strip") isn't in `byHandle` yet — index it (and its
+        // descendants) lazily on first traversal, same as the explicit `index(opens)` call
+        // in the `opensWindow` press case, just generalized to any tree mutation.
+        for k in kids where byHandle[AXHandle(fake: k)] == nil { index(k) }
+        return kids.map { AXHandle(fake: $0) }
     }
     func string(_ attr: AXAttr, of h: AXHandle) -> String? {
         guard let n = node(h) else { return nil }
