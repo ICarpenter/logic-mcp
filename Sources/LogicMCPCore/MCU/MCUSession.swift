@@ -120,12 +120,25 @@ public actor MCUSession {
         await Self.first(of: events(), timeout: timeout, where: predicate)
     }
 
-    public func settle(_ quiet: Duration) async {
-        while await waitFor(timeout: quiet, { _ in true }) != nil {}
+    /// Wait for a `quiet`-long gap with no inbound events, but never longer than `overall`.
+    /// Logic streams meter/timecode messages continuously while the transport rolls, so the
+    /// quiet window may never open during playback; the overall deadline guarantees return.
+    public func settle(_ quiet: Duration, overall: Duration = .seconds(2)) async {
+        let deadline = ContinuousClock.now + overall
+        while ContinuousClock.now < deadline {
+            let remaining = deadline - ContinuousClock.now
+            let window = min(quiet, remaining)
+            if await waitFor(timeout: window, { _ in true }) == nil { return }   // quiet gap reached
+        }
     }
 
-    private static func first(of stream: AsyncStream<MCUEvent>, timeout: Duration,
-                              where predicate: @escaping @Sendable (MCUEvent) -> Bool) async -> MCUEvent? {
+    /// Wait for the first event on an ALREADY-OPEN `events()` stream that satisfies `predicate`,
+    /// or `nil` on timeout. `events()` is LIVE-ONLY (it does not replay), so a caller that must
+    /// not miss an echo has to open the stream BEFORE triggering the action, then pass it here —
+    /// exactly the shape `moveFader` uses. Subscribing AFTER the action (e.g. `async let` around
+    /// a `press`) can miss an echo that Logic delivers before the subscription registers.
+    public static func first(of stream: AsyncStream<MCUEvent>, timeout: Duration,
+                             where predicate: @escaping @Sendable (MCUEvent) -> Bool) async -> MCUEvent? {
         await withTaskGroup(of: MCUEvent?.self) { group in
             group.addTask {
                 for await event in stream where predicate(event) { return event }

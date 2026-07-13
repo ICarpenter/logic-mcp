@@ -2,3 +2,6 @@
 .swiftpm/
 *.xcodeproj
 .DS_Store
+
+# Machine-specific: absolute path to the built daemon
+.mcp.json

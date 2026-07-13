@@ -1,0 +1,18 @@
+# Captured 2026-07-10, Logic Pro 12.3, mcp_test, vox strip.
+# FINDING: in the DEFAULT mixer view a strip exposes only a single
+#   AXButton description="send button"
+# (a slot/menu opener) and NO settable per-send level control. `vox` has no active
+# send configured, so no send level is addressable here.
+#
+# Implication for set_send (Task 9): send LEVELS are not directly settable AX controls
+# in the default mixer view. Reaching them requires either:
+#   (a) "Sends on Faders" mode — the mixer header has an AXCheckBox "Sends on Faders:"
+#       and an AXPopUpButton; enabling it swaps the channel fader to the selected send's
+#       level, which IS a settable slider; or
+#   (b) a strip that already has an active send may expose it differently (untested here —
+#       vox has none).
+#
+# Decision deferred to Task 9 execution: probe a strip WITH an active send and/or the
+# Sends-on-Faders path; if neither yields a settable level control, set_send returns the
+# spec-sanctioned structured "send level not accessible via AX" error. It must NEVER fall
+# back to the retired MCU send path.

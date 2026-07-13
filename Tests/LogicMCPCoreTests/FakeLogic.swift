@@ -4,7 +4,7 @@ import Foundation
 actor FakeLogic {
     struct FakeTrack {
         var name: String
-        var volumeRaw: Int = 12288
+        var volumeRaw: Int = 12443   // Logic's real 0.0 dB unity under the measured FaderCurve
         var pan: Int = 64
         var mute = false
         var solo = false
@@ -30,12 +30,61 @@ actor FakeLogic {
     private var assignment: Assignment = .pan
     private var touched = Set<Int>()
     private var emitChain: Task<Void, Never>?
+    /// When true, CHANNEL± is a no-op for mixer scrolling (models a Logic/surface
+    /// where single-channel scroll is unavailable). Plugin-edit paging is unaffected.
+    private let ignoreChannelScroll: Bool
+
+    // MARK: - LCD display modelling (matches real Logic, per `logic-mcp lcdprobe`)
+
+    /// How long the transient "Volume / -9.0 dB" banner lives before the name/pan rows are
+    /// repainted. Default is short so tests are fast; `.zero` models a MISSED banner (none
+    /// painted at all), which forces `set_volume` down its curve fallback.
+    private let bannerLifetime: Duration
+    // MARK: Two hidden MCU display TOGGLES (measured on real Logic via `lcdprobe`).
+    /// AXIS 1 — `.assignPan` (0x2A) toggles between per-channel pan and the SINGLE-PARAMETER
+    /// page. In the single-parameter page the top row is pinned to a parameter header
+    /// ("Track 1 \"vox\" … Pan/Surround"), only V-Pot 0 is live, and every other V-Pot emits
+    /// NO ring echo.
+    private var singleParameterPage: Bool
+    /// AXIS 2 — `.nameValue` (0x34) toggles the per-channel pan bottom row between signed
+    /// VALUES ("0", "-30", "+63") and parameter NAMES ("Pan"). In the single-parameter page
+    /// it changes the TOP row instead, so it cannot reach values from there.
+    private var showingPanValues: Bool
+    /// When true, `.assignPan` can NEVER leave the single-parameter page (a stuck surface) —
+    /// used to prove `normalizeSurface`/`ensureNameRow` THROW rather than reading a pinned
+    /// parameter view as track names.
+    private let panStuck: Bool
+    /// Counts every button PRESS the daemon sends. Lets tests assert a normalizer presses
+    /// nothing when the surface is already in its known state.
+    private(set) var pressCount = 0
+    /// Optional model of Logic snapping pan: maps the commanded SIGNED pan (-64…63) to the
+    /// value actually painted on the LCD. Applied only for display, so the tool's read can
+    /// diverge from what it requested. Default identity.
+    private let panSnap: (@Sendable (Int) -> Int)?
+    private var bannerTask: Task<Void, Never>?
 
     var state: [FakeTrack] { tracks }
 
-    init(wire: InMemoryWire, tracks: [FakeTrack]) {
+    /// Real Logic coalesces a fast burst of V-Pot deltas before refreshing the LED ring, so a
+    /// sweep that returns to where it started (e.g. -47 → -64 → -47) emits NO ring echo at all.
+    /// Set this to model that: the pan still moves, Logic just never echoes a ring.
+    private let ringEchoes: Bool
+
+    init(wire: InMemoryWire, tracks: [FakeTrack], ignoreChannelScroll: Bool = false,
+         bannerLifetime: Duration = .milliseconds(200),
+         singleParameterPage: Bool = false, showingPanValues: Bool = true,
+         panStuck: Bool = false,
+         ringEchoes: Bool = true,
+         panSnap: (@Sendable (Int) -> Int)? = nil) {
         self.wire = wire
         self.tracks = tracks
+        self.ignoreChannelScroll = ignoreChannelScroll
+        self.bannerLifetime = bannerLifetime
+        self.singleParameterPage = singleParameterPage
+        self.showingPanValues = showingPanValues
+        self.panStuck = panStuck
+        self.ringEchoes = ringEchoes
+        self.panSnap = panSnap
     }
 
     static func standardSession() -> [FakeTrack] {
@@ -91,7 +140,9 @@ actor FakeLogic {
             guard index < tracks.count else { return }
             tracks[index].volumeRaw = value
             emit(.faderEcho(channel: ch, value: value))
+            paintVolumeBanner(channel: ch, raw: value)
         case .buttonPress(let button):
+            pressCount += 1
             handlePress(button)
         case .buttonRelease:
             break
@@ -125,11 +176,16 @@ actor FakeLogic {
             selected = bankOffset + ch
             emit(.led(button: .select(channel: ch), state: .on))
         case .bankRight:
-            let lastBankStart = max(0, ((tracks.count - 1) / 8) * 8)
-            let next = min(bankOffset + 8, lastBankStart)
+            // Real Logic: snap UP to the stride-8 grid, then clamp at the right edge.
+            // The LAST bank window is clamped to maxOffset (overlaps the previous one),
+            // it is NOT stride-aligned-with-blank-padding.
+            let maxOffset = max(0, tracks.count - 8)
+            let next = min(((bankOffset / 8) + 1) * 8, maxOffset)
             if next != bankOffset { bankOffset = next; sendBankLCD() }
         case .bankLeft:
-            let next = max(0, bankOffset - 8)
+            // Real Logic: snap BACK to the stride-8 grid (integer division), then clamp at 0.
+            // From a clamped offset like 12 this goes to 8, NOT 4.
+            let next = max(((bankOffset + 7) / 8 - 1) * 8, 0)
             if next != bankOffset { bankOffset = next; sendBankLCD() }
         case .play:
             isPlaying = true
@@ -150,7 +206,21 @@ actor FakeLogic {
             emit(.led(button: .cycle, state: cycling ? .on : .off))
         case .assignPan:
             assignment = .pan
-            sendBankLCD()
+            // AXIS 1 toggle: per-channel pan ⇄ single-parameter page. A stuck surface can
+            // never leave the single-parameter page.
+            singleParameterPage = panStuck ? true : !singleParameterPage
+            repaintRows()
+        case .nameValue:
+            // AXIS 2 toggle. In per-channel pan it flips the BOTTOM row (values ⇄ names). In
+            // the single-parameter page it changes the TOP row instead and does NOT reach
+            // values — a normalizer that presses it there makes no progress, which is exactly
+            // why axis 1 must be fixed first.
+            if singleParameterPage {
+                emit(.lcd(offset: 0, text: singleParamTop()))   // top changes; still not names
+            } else {
+                showingPanValues.toggle()
+                sendPanLCD()
+            }
         case .assignSend:
             assignment = .send
             sendSendLCD()
@@ -164,16 +234,29 @@ actor FakeLogic {
             }
         case .channelRight:
             if case .pluginEdit(let slot, let page) = assignment {
+                // Plugin-edit mode: CHANNEL± pages plugin parameters.
                 let paramCount = tracks[selected].plugins[slot].params.count
                 if (page + 1) * 8 < paramCount {
                     assignment = .pluginEdit(slot: slot, page: page + 1)
                     sendPluginEditLCD()
                 }
+            } else if !ignoreChannelScroll {
+                // Mixer mode: single-channel scroll, clamped at the same right edge as bank.
+                let maxOffset = max(0, tracks.count - 8)
+                let next = min(bankOffset + 1, maxOffset)
+                if next != bankOffset { bankOffset = next; sendBankLCD() }
             }
         case .channelLeft:
-            if case .pluginEdit(let slot, let page) = assignment, page > 0 {
-                assignment = .pluginEdit(slot: slot, page: page - 1)
-                sendPluginEditLCD()
+            if case .pluginEdit(let slot, let page) = assignment {
+                // Plugin-edit mode: CHANNEL± pages plugin parameters (page 0 is a no-op).
+                if page > 0 {
+                    assignment = .pluginEdit(slot: slot, page: page - 1)
+                    sendPluginEditLCD()
+                }
+            } else if !ignoreChannelScroll {
+                // Mixer mode: single-channel scroll, clamped at 0.
+                let next = max(bankOffset - 1, 0)
+                if next != bankOffset { bankOffset = next; sendBankLCD() }
             }
         case .automationRead, .automationWrite, .automationTouch, .automationLatch:
             let mode: String = switch button {
@@ -194,10 +277,14 @@ actor FakeLogic {
     private func handleVPot(channel: Int, ticks: Int) {
         switch assignment {
         case .pan:
+            // In the single-parameter page only V-Pot 0 is live; every other V-Pot emits
+            // NO ring echo and moves nothing (measured on real Logic).
+            if singleParameterPage && channel != 0 { return }
             let index = bankOffset + channel
             guard index < tracks.count else { return }
             tracks[index].pan = max(0, min(127, tracks[index].pan + ticks))
-            emit(.vpotRing(channel: channel, value: 1 + tracks[index].pan / 12))
+            if ringEchoes { emit(.vpotRing(channel: channel, value: 1 + tracks[index].pan / 12)) }
+            sendPanLCD()   // Logic prints the (possibly snapped) pan on the bottom row
         case .send:
             guard channel < tracks[selected].sends.count else { return }
             let level = max(0, min(127, tracks[selected].sends[channel].level + ticks))
@@ -220,18 +307,91 @@ actor FakeLogic {
     }
 
     private func sendBankLCD() {
-        var top = ""
-        for ch in 0..<8 {
-            let index = bankOffset + ch
-            top += index < tracks.count ? cell(tracks[index].name) : "       "
-        }
-        emit(.lcd(offset: 0, text: top))
+        // Emit fader positions FIRST, then the LCD rows. Tests synchronize on the LCD event,
+        // so echoes-before-LCD guarantees the handshake's resting echoes are already consumed
+        // by the time a following moveFader opens its own event stream — otherwise it could
+        // latch a stale resting-position echo instead of the fresh move it just sent.
         for ch in 0..<8 {
             let index = bankOffset + ch
             if index < tracks.count {
                 emit(.faderEcho(channel: ch, value: tracks[index].volumeRaw))
             }
         }
+        repaintRows()
+    }
+
+    /// Repaint the top row (track names, or the pinned parameter header when in the single-
+    /// parameter page) and the pan bottom row, WITHOUT re-emitting fader positions — used by
+    /// the banner revert, which must not look like a fader move.
+    private func repaintRows() {
+        if singleParameterPage {
+            emit(.lcd(offset: 0, text: singleParamTop()))
+        } else {
+            var top = ""
+            for ch in 0..<8 {
+                let index = bankOffset + ch
+                top += index < tracks.count ? cell(tracks[index].name) : "       "
+            }
+            emit(.lcd(offset: 0, text: top))
+        }
+        sendPanLCD()
+    }
+
+    /// Bottom row. Per-channel pan paints one live cell per strip — signed VALUES ("0",
+    /// "-30", "+63") or the "Pan" NAME per axis 2, and "-" where a strip has no pan. The
+    /// single-parameter page paints ONE live cell (V-Pot 0) and "-" for the other seven.
+    private func sendPanLCD() {
+        var bottom = ""
+        if singleParameterPage {
+            let index = bankOffset
+            let head = index < tracks.count
+                ? (showingPanValues ? panText(tracks[index].pan) : "Pan") : "-"
+            bottom += cell(head)
+            for _ in 1..<8 { bottom += cell("-") }
+        } else {
+            for ch in 0..<8 {
+                let index = bankOffset + ch
+                bottom += index < tracks.count
+                    ? cell(showingPanValues ? panText(tracks[index].pan) : "Pan") : cell("-")
+            }
+        }
+        emit(.lcd(offset: 56, text: bottom))
+    }
+
+    private func panText(_ storedPan: Int) -> String {
+        let signed = storedPan - 64
+        let displayed = panSnap?(signed) ?? signed
+        return displayed > 0 ? "+\(displayed)" : "\(displayed)"
+    }
+
+    /// Paint the transient "Volume / <dB>" banner in the touched channel's 2-cell field
+    /// (`min(channel, 6)`), then schedule the name/pan rows to return after `bannerLifetime`.
+    /// The dB text is derived from `FaderCurve` so the fixture stays self-consistent.
+    private func paintVolumeBanner(channel ch: Int, raw: Int) {
+        guard bannerLifetime > .zero else { return }   // .zero => missed banner (curve fallback)
+        let pair = min(ch, 6)
+        let dbText = FaderCurve.dB(fromRaw: raw).map { String(format: "%.1f dB", $0) } ?? "-oo dB"
+        emit(.lcd(offset: pair * 7, text: "Volume".padding(toLength: 14, withPad: " ", startingAt: 0)))
+        emit(.lcd(offset: 56 + pair * 7, text: dbText.padding(toLength: 14, withPad: " ", startingAt: 0)))
+        bannerTask?.cancel()
+        let lifetime = bannerLifetime
+        bannerTask = Task { [weak self] in
+            try? await Task.sleep(for: lifetime)
+            guard !Task.isCancelled else { return }
+            await self?.revertBanner()
+        }
+    }
+
+    private func revertBanner() {
+        repaintRows()   // names (unless pinned) + pan; no fader echoes
+    }
+
+    /// The single-parameter page pins this parameter header on the TOP row. `isShowingTrackNames`
+    /// must reject it (the "Pan/Surround" marker), so enumeration never reads it as track names.
+    private func singleParamTop() -> String {
+        var s = "Track 1 \"vox\"".padding(toLength: 44, withPad: " ", startingAt: 0)
+        s += "Pan/Surround"   // 44 + 12 = 56
+        return s
     }
 
     private func sendSendLCD() {
