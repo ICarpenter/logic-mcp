@@ -47,7 +47,7 @@ this phase's tools.
 ## Goal
 
 Deliver no-focus, self-verified structural control of tracks and plugins, reusing the Phase 2 AX
-read layer as the verification oracle, with a working checkpoint as the safety spine.
+read layer as the verification oracle, with Logic-native undo as the safety spine (checkpoint deferred — see Safety model).
 
 ## Non-goals (this phase)
 
@@ -110,7 +110,7 @@ No new verification machinery; the tools return verified ground truth by constru
 | Tool | Mechanism | Verified by |
 |---|---|---|
 | `create_track(kind)` | `Track → New Audio/Software Instrument/External MIDI Track` (direct); `New Tracks…` dialog when count/options need it. Logic assigns the default name (e.g. "Audio 1") — naming is unavailable (rename deferred) | `AXMixer.syncTracks` shows the new strip |
-| `delete_track(name)` | select the strip's track, `Track → Delete Track` | strip absent on re-read; **auto-checkpoints first** |
+| `delete_track(name)` | select the strip's track, `Track → Delete Track` | strip absent on re-read; **reversible via `undo_structural`** (no checkpoint — deferred) |
 | ~~`rename_track(name, to)`~~ | **DEFERRED** — track-name fields are not AX-committable (AXSetValue changes the field cosmetically but never commits the edit; committing needs real keystrokes ⇒ focus). Returns a structured "not available via AX" error, like Phase 2's `set_send`. See `Fixtures/ax/rename.txt`. | — |
 | `select_track(name)` | `AXPress` the track header / strip (Phase 2 exposes both) | selection reflected |
 | `insert_plugin(track, slot, name)` | strip plugin-slot popup → category → plugin, OR `Mix → Search and Add Plug-in…` (probe decides which is reliable) | `AXBridge.pluginGroups` shows it |
