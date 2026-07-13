@@ -1,0 +1,49 @@
+# Plugin-insert popup — captured 2026-07-13, Logic Pro 12.3, mcp_test, vox strip (Logic BACKGROUNDED).
+#
+# The strip's insert slot:  AXButton description="audio plug-in"
+#   actions = ["AXPress", "Name:Open plug-in menu with legacy plug-ins..."]
+#   (AXPress returned -25204 yet the popup's AXMenu tree WAS readable — like the menu bar and the
+#    routing popup, the tree is statically readable with Logic backgrounded. Don't trust the
+#    AXPress return code; verify by READING the tree.)
+#
+# STRUCTURE — THREE levels deep (deeper than the routing popup):
+#
+# AXMenu (top level, 25 items)
+#   Recent                              (a label/separator group)
+#   Multipressor              ▸ (submenu)   <- RECENTLY-USED plugins appear at TOP LEVEL
+#   Channel EQ                ▸ (submenu)
+#   Compressor                ▸ (submenu)
+#   UAD Teletronix LA-2A Legacy ▸
+#   UAD Teletronix LA-2A Gray   ▸
+#   ---
+#   Amps and Pedals           ▸ (submenu)   <- then CATEGORIES
+#   Delay                     ▸
+#   Distortion                ▸
+#   Dynamics                  ▸
+#   EQ                        ▸
+#   Filter                    ▸
+#   Imaging                   ▸
+#   Metering                  ▸
+#   Modulation                ▸
+#   Multi Effects             ▸
+#   Pitch                     ▸
+#   Reverb                    ▸
+#   … (more categories)
+#
+# Category submenu  → the plugin names in that category (each ▸ with its own submenu)
+# Plugin submenu    → the CHANNEL CONFIGURATION leaves, e.g.:
+#     submenu of "Multipressor":  Stereo | Dual Mono
+#
+# => The pressable LEAF is the channel configuration, NOT the plugin name.
+#
+# IMPLICATION for insert_plugin(track, name):
+#   Path is 2 or 3 levels:
+#     Recent:        ["Channel EQ", "Stereo"]
+#     Via category:  ["EQ", "Channel EQ", "Stereo"]
+#   Implementation: search the popup tree for a menu item titled `name` at TOP LEVEL or ONE CATEGORY
+#   DEEP; then descend into ITS submenu and press the channel-config leaf — prefer "Stereo", else the
+#   first item. Verify by re-reading AXBridge.pluginGroups(strip) for a group named `name`.
+#   Dismiss the popup (AXCancel) on any miss so nothing is left hanging.
+#
+# NOTE: `Mix ▸ Search and Add Plug-in…` is NOT a viable alternative — it needs typing into a search
+# field, and AX text-field writes into Logic never commit (see Fixtures/ax/rename.txt).

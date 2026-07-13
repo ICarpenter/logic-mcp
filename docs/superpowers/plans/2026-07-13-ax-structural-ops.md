@@ -844,9 +844,74 @@ Expose the output-button finder on `AXBridge` (it's currently `private func outp
 
 ---
 
-## Task 8: `insert_plugin`
+## Task 8: `insert_plugin` (THREE-level popup)
 
-**Files:** Create `PluginInsertTool.swift`, `PluginInsertToolTests.swift`. Uses `popup_plugin.txt` (Task 1) — implement whichever path (strip popup vs `Mix ▸ Search and Add Plug-in…`) Task 1 found reliably title-addressable.
+**Files:** Create `Sources/LogicMCPCore/Tools/PluginInsertTool.swift`,
+`Tests/LogicMCPCoreTests/PluginInsertToolTests.swift`; modify `AXMenuDriver.swift`.
+**Fixture (captured):** `Tests/LogicMCPCoreTests/Fixtures/ax/popup_plugin.txt` — READ IT FIRST.
+
+**Key facts from the fixture:** the insert slot is `AXButton description="audio plug-in"`. Its popup is
+**three levels**: top level holds RECENT plugins (`Channel EQ ▸`) *and* CATEGORIES (`EQ ▸`,
+`Dynamics ▸`…); a category's submenu holds plugin names; **a plugin's submenu holds the CHANNEL
+CONFIGURATION leaves (`Stereo` / `Dual Mono`) — that config is the pressable leaf, not the plugin
+name.** `Mix ▸ Search and Add Plug-in…` is NOT viable (needs typing; AX text writes never commit —
+see `rename.txt`).
+
+Add to `AXMenuDriver`:
+
+```swift
+    /// Insert-plugin popup: find the menu item titled `plugin` at TOP LEVEL (Recent) or ONE CATEGORY
+    /// deep, then press the channel-config leaf inside ITS submenu (prefer `config`, else the first
+    /// item). See Fixtures/ax/popup_plugin.txt — the pressable leaf is the CONFIG, not the plugin.
+    /// Dismisses the popup on any miss.
+    public func selectPluginFromPopup(from slot: AXHandle, plugin: String,
+                                      config: String = "Stereo") async throws {
+        try? p.perform(.press, on: slot)       // opens the popup (return code is unreliable; read the tree)
+        try? await Task.sleep(for: .milliseconds(80))
+        // Candidates: top-level items (Recent) + items one category deep.
+        var candidates: [AXHandle] = []
+        for item in menuItems(under: slot) {
+            candidates.append(item)
+            candidates.append(contentsOf: menuItems(under: item))
+        }
+        guard let pluginItem = candidates.first(where: {
+            (p.string(.title, of: $0) ?? "").caseInsensitiveCompare(plugin) == .orderedSame
+        }) else {
+            try? p.perform(.cancel, on: slot)
+            throw ToolFailure(error: "plugin '\(plugin)' not found in the insert menu", layer: "ax",
+                              expected: "a plugin named '\(plugin)' (top level or one category deep)",
+                              observed: "available: \(candidates.compactMap { p.string(.title, of: $0) }.filter { !$0.isEmpty }.prefix(30).joined(separator: ", "))")
+        }
+        // The plugin item's submenu holds the channel-config leaves — press one.
+        let configs = menuItems(under: pluginItem)
+        let leaf = configs.first { (p.string(.title, of: $0) ?? "").caseInsensitiveCompare(config) == .orderedSame }
+            ?? configs.first
+        guard let leaf else {
+            try? p.perform(.cancel, on: slot)
+            throw ToolFailure(error: "no channel configuration under '\(plugin)'", layer: "ax",
+                              expected: "e.g. 'Stereo' or 'Dual Mono'", observed: "empty submenu")
+        }
+        try p.perform(.press, on: leaf)
+    }
+```
+
+`InsertPluginTool` (`insert_plugin`): resolve strip → `control(strip, description: "audio plug-in")` →
+`selectPluginFromPopup(from: slot, plugin: name)` → **settle** (poll `AXBridge.pluginGroups(strip)`
+until it contains `name` — add a `settlePlugins` sibling to `settleTracks`/`settleOutput`, same idiom;
+do NOT inline a sleep) → confirm, else throw `layer:"ax"` "plugin insert not confirmed". Return
+`{track, plugin}`. Register it.
+
+**Tests:** model the three-level popup in `FakeAXTree` (top-level `Channel EQ ▸` with a `Stereo`/`Dual
+Mono` submenu, plus a category `EQ ▸` containing `Channel EQ ▸`); wire `onPress` on the config leaf so
+it appends a plugin group named `Channel EQ` to the strip (so `pluginGroups` re-read confirms). Cover:
+(a) insert a top-level (Recent) plugin succeeds; (b) insert a plugin found only one category deep
+succeeds — this test MUST fail if the search is top-level-only; (c) unknown plugin → `layer:"ax"` with
+available titles; (d) settle poll actually waits (use the delayed-reveal idiom — note
+`AXBridge.pluginGroups` re-reads, so pick an `afterReads` large enough not to be tautological).
+
+<details><summary>Original (superseded) Task 8 text — reference only</summary>
+
+Uses `popup_plugin.txt` (Task 1) — implement whichever path (strip popup vs `Mix ▸ Search and Add Plug-in…`) Task 1 found reliably title-addressable.
 
 - [ ] **Step 1: Test** — `insert_plugin(track, slot, name)` adds a plugin group; re-read via `AXBridge.pluginGroups` shows it. Model the fake so selecting the plugin appends a group to the strip.
 - [ ] **Step 2: Run — fails. Step 3: Implement** `InsertPluginTool` — resolve the strip, drive the plugin popup/search per the fixture, then verify `pluginGroups(strip)` contains a group matching `name`:
@@ -883,6 +948,10 @@ public struct InsertPluginTool: LogicTool {
 `pluginMenuPath(for:)` returns the title path from `popup_plugin.txt` (Logic groups stock plugins by category; the fixture gives the exact path, or the search-dialog path if that route was chosen). If the plugin name can't be located, the popup is dismissed and a structured error returned.
 
 - [ ] **Step 4: Run — passes. Step 5: full suite + commit** (`feat(ax): insert_plugin via <chosen path>`).
+
+</details>
+
+- [ ] **Run focused tests → GREEN, FULL suite, then commit** (`feat(ax): insert_plugin via three-level insert popup`).
 
 ---
 
