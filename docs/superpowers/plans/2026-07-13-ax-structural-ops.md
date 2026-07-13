@@ -4,7 +4,7 @@
 
 **Goal:** Give the agent no-focus, self-verified **structural control of Logic Pro** — create/delete/rename/select tracks, insert plugins, set output routing, and snapshot the project — driven by `AXPress` on menu items, popups, and dialogs, verified by re-reading through the Phase 2 AX layer.
 
-**Architecture:** Extend the Phase 2 `AXProvider` seam with menu-bar access, string-set, and show-menu/cancel actions, then add one new actor `AXMenuDriver` (menu-path press, popup drive, dialog fill) behind that same seam. Structure tools call `AXMenuDriver` to act and reuse `AXBridge`/`AXMixer` to verify (act → re-read → confirm). `checkpoint` + auto-checkpoint-before-`delete_track` is the safety spine.
+**Architecture:** Extend the Phase 2 `AXProvider` seam with menu-bar access, string-set, and show-menu/cancel actions, then add one new actor `AXMenuDriver` (menu-path press, popup drive, dialog fill) behind that same seam. Structure tools call `AXMenuDriver` to act and reuse `AXBridge`/`AXMixer` to verify (act → re-read → confirm). Safety is **undo-based**: Logic-native `Edit ▸ Undo` (exposed as `undo_structural`) reverses structural edits — `checkpoint` is DEFERRED (Save/Alternatives are disabled in Logic).
 
 **Tech Stack:** Swift 6, `ApplicationServices` (`AXUIElement`), swift-mcp-sdk, swift-argument-parser, XCTest. Builds on merged Phase 2 (`AXProvider`/`SystemAXProvider`/`FakeAXProvider`, `AXBridge`, `AXMixer`, `Daemon`, `logic-mcp axdump`/`smoke`).
 
@@ -15,7 +15,7 @@
 - **Verified ground truth:** every structural tool returns state re-read from AX after the action (via `AXMixer`/`AXBridge`); on mismatch it throws `ToolFailure`. Never fabricate.
 - **Structured errors only:** `ToolFailure(error:layer:expected:observed:)`, `layer:"ax"` for AX failures, `"daemon"` for bad arguments.
 - **Selectors key on `role` + menu-item **title** / control **description**, NEVER on `AXIdentifier`** (unstable `_NS:`-style ids).
-- **Safety:** `delete_track` (the only destructive tool) auto-checkpoints first and refuses if it cannot snapshot.
+- **Safety (REVISED — Task 1 finding):** `checkpoint` is DEFERRED (Logic's Save/Save As/Save A Copy As/Project Alternatives are all disabled). `delete_track` (the only destructive tool) does NOT checkpoint; it is reversible via Logic-native `Edit ▸ Undo`, exposed as the `undo_structural` tool.
 - **Test hygiene (from HANDOFF):** hard-timeout every test run — `pkill -f xctest 2>/dev/null; perl -e 'alarm 600; exec @ARGV' swift test …`. Retain fakes (never `_ =`).
 - **Real-Logic tests are net-zero:** create-then-delete, clean up any checkpoint copy; run on the `mcp_test` scratch project, Logic backgrounded. Only ONE process holds the virtual MIDI port, but `axdump`/AX tools don't use it.
 - **`AXBridge` and `AXMenuDriver` are actors:** every call to their methods from tool code needs `await` (e.g. `await daemon.ax.control(...)`, `try await daemon.menu.pressMenuPath(...)`). The code blocks below are illustrative — add `await`/`try` exactly as the Swift 6 compiler requires, and confirm each Phase-2 method's real signature in `Sources/LogicMCPCore/AX/` before calling it (esp. `AXMixer.syncTracks()`'s return type, and that `AXBridge.control`/`read`/`pluginGroups`/`outputButtonHandle` are actor-isolated).
