@@ -188,3 +188,24 @@ func settleOutput(_ daemon: Daemon, strip: AXHandle, timeout: Duration = .second
     }
     return output
 }
+
+/// Poll the STRIP'S PLUGIN GROUPS (re-reading via AX) until `condition` holds on the group-name
+/// list, or the deadline passes. Neither `settleTracks` (the mixer's track-name list) nor
+/// `settleOutput` (one strip's output slot) is the right oracle for `insert_plugin`, whose effect
+/// lands on the strip's plugin-insert slots — same async-AX-update hazard as both: a popup-leaf
+/// press's effect on the strip's children can lag the press ("blind-press-then-read" is this
+/// codebase's top bug class). Polls every 50ms for up to `timeout`. Returns the final group-name
+/// list.
+@discardableResult
+func settlePlugins(_ daemon: Daemon, strip: AXHandle, timeout: Duration = .seconds(3),
+                   until condition: ([String]) -> Bool) async -> [String] {
+    var names = await daemon.ax.pluginGroups(strip).map(\.name)
+    if condition(names) { return names }
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        try? await Task.sleep(for: .milliseconds(50))
+        names = await daemon.ax.pluginGroups(strip).map(\.name)
+        if condition(names) { return names }
+    }
+    return names
+}

@@ -135,4 +135,38 @@ public actor AXMenuDriver {
         }
         try p.perform(.press, on: hit)
     }
+
+    /// Insert-plugin popup: find the menu item titled `plugin` at TOP LEVEL (Recent) or ONE CATEGORY
+    /// deep, then press the channel-config leaf inside ITS submenu (prefer `config`, else the first
+    /// item). See Fixtures/ax/popup_plugin.txt — the pressable leaf is the CONFIG, not the plugin.
+    /// Dismisses the popup on any miss.
+    public func selectPluginFromPopup(from slot: AXHandle, plugin: String,
+                                      config: String = "Stereo") async throws {
+        try? p.perform(.press, on: slot)       // opens the popup (return code is unreliable; read the tree)
+        try? await Task.sleep(for: .milliseconds(80))
+        // Candidates: top-level items (Recent) + items one category deep.
+        var candidates: [AXHandle] = []
+        for item in menuItems(under: slot) {
+            candidates.append(item)
+            candidates.append(contentsOf: menuItems(under: item))
+        }
+        guard let pluginItem = candidates.first(where: {
+            (p.string(.title, of: $0) ?? "").caseInsensitiveCompare(plugin) == .orderedSame
+        }) else {
+            try? p.perform(.cancel, on: slot)
+            throw ToolFailure(error: "plugin '\(plugin)' not found in the insert menu", layer: "ax",
+                              expected: "a plugin named '\(plugin)' (top level or one category deep)",
+                              observed: "available: \(candidates.compactMap { p.string(.title, of: $0) }.filter { !$0.isEmpty }.prefix(30).joined(separator: ", "))")
+        }
+        // The plugin item's submenu holds the channel-config leaves — press one.
+        let configs = menuItems(under: pluginItem)
+        let leaf = configs.first { (p.string(.title, of: $0) ?? "").caseInsensitiveCompare(config) == .orderedSame }
+            ?? configs.first
+        guard let leaf else {
+            try? p.perform(.cancel, on: slot)
+            throw ToolFailure(error: "no channel configuration under '\(plugin)'", layer: "ax",
+                              expected: "e.g. 'Stereo' or 'Dual Mono'", observed: "empty submenu")
+        }
+        try p.perform(.press, on: leaf)
+    }
 }
