@@ -58,7 +58,7 @@ public struct RenameTrackTool: LogicTool {
 
 public struct SelectTrackTool: LogicTool {
     public let name = "select_track"
-    public let description = "Select a track by name (case-insensitive; unique prefix ok)."
+    public let description = "Select a track by name. KNOWN LIMITATION: AX cannot change Logic's track selection, so this does not actually change the selection in Logic — it only resolves the track. See Fixtures/ax/selection.txt."
     public let inputSchema: Value = .object([
         "type": .string("object"),
         "properties": .object(["name": .object(["type": .string("string")])]),
@@ -77,7 +77,7 @@ public struct SelectTrackTool: LogicTool {
 
 public struct DeleteTrackTool: LogicTool {
     public let name = "delete_track"
-    public let description = "Delete a track. Reversible via Logic-native undo (call undo_structural to restore). Verified by re-reading the mixer."
+    public let description = "DISABLED — not available via AX in this release. Always returns a structured error and NEVER deletes anything: AX cannot change Logic's track selection (AXPress on a mixer strip is unsupported; AXSetValue(AXSelected) returns success but changes nothing — see Fixtures/ax/selection.txt), yet `Track ▸ Delete Track` deletes the SELECTED track. A tool that pressed the target strip and then Delete Track would actually delete whatever track the user last selected in Logic — a wrong-track destructive bug. Delete tracks in Logic directly."
     public let inputSchema: Value = .object([
         "type": .string("object"),
         "properties": .object(["name": .object(["type": .string("string")])]),
@@ -86,19 +86,18 @@ public struct DeleteTrackTool: LogicTool {
     let daemon: Daemon
     public func invoke(_ args: [String: Value]) async throws -> Value {
         let name = try requireString(args, "name", tool: name)
+        // Resolve via AX FIRST so a bad/unknown track name still gives the precise
+        // AXBridge.find() error, not this blanket "not available" that would mask it.
         let strip = try await daemon.ax.find(name)             // throws layer:"ax" if unknown
         let resolved = await daemon.ax.read(strip).name
-        try await daemon.menu.pressElement(strip)              // select the target
-        try await daemon.menu.pressMenuPath(["Track", "Delete Track"])
-        // Verify: the strip disappeared. Logic's AX tree updates ASYNCHRONOUSLY after a menu
-        // press (see create_track's settleTracks comment) — settle-poll instead of trusting a
-        // single immediate re-read.
-        let after = try await settleTracks(daemon) { names in !names.contains(resolved) }
-        guard !after.contains(resolved) else {
-            throw ToolFailure(error: "delete not confirmed", layer: "ax",
-                              expected: "'\(resolved)' gone", observed: "still present")
-        }
-        return .object(["deleted": .string(resolved), "reversible": .string("call undo_structural")])
+        // MUST NOT press anything from here — no pressElement(strip), no
+        // pressMenuPath(["Track", "Delete Track"]). See selection.txt: AX cannot select a track,
+        // so Delete Track would act on whatever is currently selected in Logic, not `resolved`.
+        throw ToolFailure(
+            error: "delete_track is not available via AX in this release (it could delete the WRONG track)",
+            layer: "ax",
+            expected: "delete '\(resolved)' in Logic directly",
+            observed: "Logic's `Track ▸ Delete Track` deletes the SELECTED track, and AX cannot change Logic's track selection (AXPress on a strip is unsupported; AXSetValue(AXSelected) returns success but does nothing — see Fixtures/ax/selection.txt). Deleting would target whatever track is currently selected.")
     }
 }
 

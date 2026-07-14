@@ -109,13 +109,18 @@ final class StructureToolTests: XCTestCase {
 
     // MARK: - delete_track / undo_structural
     //
-    // Safety model (Fixtures/ax/checkpoint.txt): Save/Save As/Save A Copy As/Project
-    // Alternatives are ALL disabled in real Logic, so delete_track does NOT auto-checkpoint.
-    // Its safety is that structural ops are reversible via Logic-native Edit ▸ Undo (proven on
-    // real Logic: create_track then Edit ▸ Undo cleanly restored the strip count). These fakes
-    // model that: pressing the "scratch" strip records it as the current selection (mirroring
-    // Logic acting on "the selected track"); pressing "Delete Track" removes the selection from
-    // the mixer AXLayoutArea; pressing "Undo" (providerDeletableWithUndo only) re-appends it.
+    // Safety model (Fixtures/ax/selection.txt, resolved 2026-07-13): AX cannot change Logic's
+    // track selection — AXPress on a mixer strip is unsupported (-25200) and
+    // AXSetValue(AXSelected) returns success while changing nothing. Since `Track ▸ Delete Track`
+    // deletes the SELECTED track, a tool that pressed a strip and then Delete Track would delete
+    // whatever track the user last selected in Logic, not the requested one — a wrong-track
+    // destructive bug caught live on real Logic. `delete_track` is therefore DISABLED: it always
+    // throws a structured error and must never press the strip or "Track ▸ Delete Track" at all.
+    // These fakes still model the (never-invoked-by-the-tool) press sequence that WOULD delete —
+    // pressing the "scratch" strip records it as the current selection, and pressing "Delete
+    // Track" removes the selection from the mixer AXLayoutArea — so the "nothing was removed"
+    // regression guard below is actually exercising a fake that COULD delete, proving the guard
+    // would fail if delete_track were re-enabled.
 
     /// Track ▸ Delete Track removes the currently-selected strip from the mixer area.
     func providerDeletable(_ trackName: String) -> FakeAXProvider {
@@ -159,15 +164,39 @@ final class StructureToolTests: XCTestCase {
         return p
     }
 
-    func testDeleteTrackRemovesStrip() async throws {
-        // fake: press "Delete Track" removes the selected strip from the mixer area
-        let d = await daemon(providerDeletable("scratch"))
-        _ = try await d.axMixer.syncTracks()
-        let r = try await DeleteTrackTool(daemon: d).invoke(["name": .string("scratch")])
-        guard case .object(let o) = r else { return XCTFail() }
-        XCTAssertEqual(o["deleted"], .string("scratch"))
-        let names = try await currentTrackNames(d)
-        XCTAssertFalse(names.contains("scratch"))
+    /// THE regression guard: delete_track must NEVER delete, because AX cannot select a track
+    /// (selection.txt) and `Track ▸ Delete Track` acts on whatever IS selected. `providerDeletable`
+    /// models a fake that WOULD delete "scratch" if the tool pressed the strip then "Delete
+    /// Track" — so asserting the strip survives is a real guard, not a vacuous one: if
+    /// `delete_track` were re-enabled to press-then-delete, this assertion would fail.
+    func testDeleteTrackNeverDeletes() async throws {
+        var deletePressed = false
+        let p = providerDeletable("scratch")
+        // Instrument the fake's "Delete Track" menu item so we can also assert it was never
+        // reached at all, not just that its effect (strip removal) didn't happen.
+        if let bar = p.menuBarNode {
+            for barItem in bar.children where barItem.title == "Track" {
+                for menu in barItem.children {
+                    for item in menu.children where item.title == "Delete Track" {
+                        let original = item.onPress
+                        item.onPress = { deletePressed = true; original?() }
+                    }
+                }
+            }
+        }
+        let d = await daemon(p)
+        let namesBefore = try await d.axMixer.syncTracks()
+        do {
+            _ = try await DeleteTrackTool(daemon: d).invoke(["name": .string("scratch")])
+            XCTFail("expected a not-available ToolFailure")
+        } catch let f as ToolFailure {
+            XCTAssertEqual(f.layer, "ax")
+            XCTAssertTrue(f.error.contains("not available"), "error should say delete_track is not available: \(f.error)")
+        }
+        XCTAssertFalse(deletePressed, "delete_track must never press Track ▸ Delete Track")
+        let namesAfter = try await currentTrackNames(d)
+        XCTAssertEqual(namesAfter, namesBefore, "delete_track must not change the mixer's track list")
+        XCTAssertTrue(namesAfter.contains("scratch"), "the target track must still be present after delete_track")
     }
 
     func testDeleteTrackUnknownTrackErrorsAX() async throws {
@@ -181,14 +210,23 @@ final class StructureToolTests: XCTestCase {
         }
     }
 
+    /// undo_structural is unaffected by the delete_track disable — it just drives Edit ▸ Undo and
+    /// settle-polls the track list. Since delete_track itself no longer presses anything, this
+    /// test exercises the deletion+undo sequence directly through `daemon.menu` (bypassing the
+    /// now-disabled tool) so undo_structural's own behavior stays covered.
     func testUndoStructuralRestores() async throws {
-        // fake: press "Undo" re-adds the last removed strip
+        // fake: pressing "scratch" selects it, pressing "Delete Track" removes the selection,
+        // pressing "Undo" re-adds the last removed strip.
         let d = await daemon(providerDeletableWithUndo("scratch"))
+        let strip = try await d.ax.find("scratch")
         _ = try await d.axMixer.syncTracks()
-        _ = try await DeleteTrackTool(daemon: d).invoke(["name": .string("scratch")])
+        try await d.menu.pressElement(strip)
+        try await d.menu.pressMenuPath(["Track", "Delete Track"])
+        var names = try await currentTrackNames(d)
+        XCTAssertFalse(names.contains("scratch"), "test setup should have removed 'scratch' before exercising undo")
         _ = try await UndoStructuralTool(daemon: d).invoke([:])
-        let names = try await currentTrackNames(d)
-        XCTAssertTrue(names.contains("scratch"))
+        names = try await currentTrackNames(d)
+        XCTAssertTrue(names.contains("scratch"), "undo_structural should restore the deleted strip")
     }
 
     // MARK: - set_output (NESTED routing popup)
