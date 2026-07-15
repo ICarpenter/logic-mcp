@@ -44,6 +44,38 @@ final class AXBridgeTests: XCTestCase {
         XCTAssertEqual(c.output, "Bus 9")
     }
 
+    /// Real Logic (2026-07-15, mcp_test.logicx): strips scrolled OFF-SCREEN come back with a
+    /// numeric-GARBAGE `AXLayoutItem` description ("88 1 4") instead of the track name, while
+    /// the child `AXTextField description="name"` still carries the true name ("vox"). Observed
+    /// live for vox, Aux 1, Stereo Out and Master — `get_track("Stereo Out")` failed with
+    /// "no track named 'Stereo Out'" and `refresh_state` listed them under the garbage names.
+    /// Strip names must be read from the name FIELD, never the layout-item description.
+    func offscreenGarbageNameProvider() -> FakeAXProvider {
+        let strip = FakeAXNode(role: "AXLayoutItem", description: "88 1 4", children: [
+            FakeAXNode(role: "AXTextField", description: "name", stringValue: "vox"),
+            FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute", stringValue: "off"),
+            FakeAXNode(role: "AXSlider", description: "pan", value: 0, settable: true),
+            FakeAXNode(role: "AXPopUpButton", description: "group", title: "group"),
+            FakeAXNode(role: "AXButton", description: "output"),
+        ])
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
+        let window = FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])
+        return FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
+    }
+
+    func testStripHandlesReadsNameFromNameFieldNotGarbageLayoutDescription() async throws {
+        let bridge = AXBridge(provider: offscreenGarbageNameProvider())
+        let names = try await bridge.stripHandles().map(\.name)
+        XCTAssertEqual(names, ["vox"])
+    }
+
+    func testReadUsesNameFieldForOffscreenGarbageStrip() async throws {
+        let bridge = AXBridge(provider: offscreenGarbageNameProvider())
+        let handle = try await bridge.stripHandles()[0].handle
+        let c = await bridge.read(handle)
+        XCTAssertEqual(c.name, "vox")
+    }
+
     func testFindUnknownThrows() async throws {
         let bridge = AXBridge(provider: provider())
         do { _ = try await bridge.find("nope"); XCTFail("expected throw") }

@@ -62,11 +62,23 @@ public actor AXBridge {
         !mixerAreas().isEmpty
     }
 
+    /// A strip's TRUE track name. The `AXLayoutItem` description is UNRELIABLE — a strip scrolled
+    /// off-screen returns a numeric placeholder ("88 1 4") there instead of the name (real Logic,
+    /// 2026-07-15, mcp_test.logicx: vox / Aux 1 / Stereo Out / Master all came back garbage, and
+    /// name-addressing missed them — `get_track("Stereo Out")` → "no track named 'Stereo Out'").
+    /// The child `AXTextField description="name"` carries the real name for EVERY strip, on- or
+    /// off-screen, so read that; fall back to the layout-item description only if it's absent.
+    private func stripName(_ strip: AXHandle) -> String? {
+        if let field = control(strip, description: "name"),
+           let v = p.string(.value, of: field), !v.isEmpty { return v }
+        return p.string(.description, of: strip)
+    }
+
     public func stripHandles() throws -> [(name: String, handle: AXHandle)] {
         let area = try mixerArea()
         return p.children(of: area)
             .filter { p.string(.role, of: $0) == "AXLayoutItem" }
-            .compactMap { h in p.string(.description, of: h).map { (name: $0, handle: h) } }
+            .compactMap { h in stripName(h).map { (name: $0, handle: h) } }
     }
 
     public func find(_ name: String) throws -> AXHandle {
@@ -153,7 +165,7 @@ public actor AXBridge {
     public func outputButtonHandle(_ strip: AXHandle) -> AXHandle? { outputButton(strip) }
 
     public func read(_ strip: AXHandle) -> AXStripControls {
-        let name = p.string(.description, of: strip) ?? ""
+        let name = stripName(strip) ?? ""
         var db: Double?; var silent = false
         if let title = control(strip, description: "volume fader level").flatMap({ p.string(.title, of: $0) }),
            let parsed = AXStrip.parseDB(title) { db = parsed.db; silent = parsed.silent }
