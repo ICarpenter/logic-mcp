@@ -16,7 +16,7 @@ final class AXMixToolTests: XCTestCase {
         ])
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
         let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication",
-                              children: [FakeAXNode(role: "AXWindow", children: [area])]))
+                              children: [FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])]))
         p.nudgeMode = true   // model real Logic: AXSetValue nudges ±1 toward target
         return p
     }
@@ -45,7 +45,7 @@ final class AXMixToolTests: XCTestCase {
         ])
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
         let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication",
-                              children: [FakeAXNode(role: "AXWindow", children: [area])]))
+                              children: [FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])]))
         p.nudgeMode = true
         let d = await daemon(p)
         _ = try await d.axMixer.syncTracks()
@@ -81,7 +81,7 @@ final class AXMixToolTests: XCTestCase {
         ])
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
         let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication",
-                               children: [FakeAXNode(role: "AXWindow", children: [area])]))
+                               children: [FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])]))
         p.nudgeMode = true   // <-- model Logic's ±1-per-set behavior
         p.onSetNumber = { node, resulting in
             guard node === vol else { return }
@@ -124,7 +124,7 @@ final class AXMixToolTests: XCTestCase {
         ])
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
         let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication",
-                               children: [FakeAXNode(role: "AXWindow", children: [area])]))
+                               children: [FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])]))
         p.nudgeMode = true
         p.onSetNumber = { node, resulting in
             guard node === vol else { return }
@@ -161,7 +161,7 @@ final class AXMixToolTests: XCTestCase {
         ])
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
         let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication",
-                              children: [FakeAXNode(role: "AXWindow", children: [area])]))
+                              children: [FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])]))
         p.nudgeMode = true
         return p
     }
@@ -194,7 +194,7 @@ final class AXMixToolTests: XCTestCase {
         ])
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
         let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication",
-                               children: [FakeAXNode(role: "AXWindow", children: [area])]))
+                               children: [FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])]))
         p.nudgeMode = true
         p.onSetNumber = { node, resulting in
             guard node === vol else { return }
