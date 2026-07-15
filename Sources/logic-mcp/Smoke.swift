@@ -13,15 +13,14 @@ import MCP
 /// undo-loop cleanup. `delete_track` is DISABLED (Fixtures/ax/selection.txt: AX cannot change
 /// Logic's track selection, so pressing a strip then `Track ▸ Delete Track` would delete
 /// whatever track the user last selected, not the requested one) — the smoke calls it once to
-/// confirm it still cleanly refuses, but never depends on it for cleanup. `select_track` is a
-/// documented no-op for the same selection reason — the smoke calls it and reports, nothing more.
+/// confirm it still cleanly refuses, but never depends on it for cleanup.
 /// Cleanup is entirely via `undo_structural` (Edit ▸ Undo), the only working removal path.
 struct Smoke: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "smoke", abstract: "Drive the AX tools against real Logic (net-zero).")
 
     @Option(name: .long, help: "Track to exercise.") var track = "vox"
-    @Flag(name: .long, help: "Run the structural smoke (create_track → set_output → insert_plugin → undo_structural×N to unwind → net-zero check; select_track/delete_track are called only to report their known-limitation/disabled responses) instead of the mixer smoke.")
+    @Flag(name: .long, help: "Run the structural smoke (create_track → set_output → insert_plugin → undo_structural×N to unwind → net-zero check; delete_track is called only to report its disabled response) instead of the mixer smoke.")
     var structure = false
 
     func run() async throws {
@@ -212,21 +211,17 @@ struct Smoke: AsyncParsableCommand {
             print("    SKIPPING set_output/insert_plugin — no new track to act on")
         }
 
-        // select_track/delete_track are both known-limitation/disabled (Fixtures/ax/selection.txt:
-        // AX cannot change Logic's track selection). Call them ONLY to confirm their structured
-        // responses against real Logic — never depend on either for cleanup or net-zero below.
-        header("5. select_track name:\(track)  (REPORT ONLY — known no-op, does not change Logic's selection)")
-        let selectResp = await call("select_track", ["name": .string(track)])
-        print("    select_track \(selectResp.isError ? "errored" : "returned") (informational only, not checkpointed): \(selectResp.text)")
-
+        // delete_track is known-limitation/disabled (Fixtures/ax/selection.txt: AX cannot change
+        // Logic's track selection). Call it ONLY to confirm its structured response against real
+        // Logic — never depend on it for cleanup or net-zero below.
         if let scratch = newTrack {
-            header("6. delete_track name:\(scratch)  (REPORT ONLY — expect structured 'not available via AX' error; delete_track is DISABLED)")
+            header("5. delete_track name:\(scratch)  (REPORT ONLY — expect structured 'not available via AX' error; delete_track is DISABLED)")
             let delResp = await call("delete_track", ["name": .string(scratch)])
             checkpoint(delResp.isError && delResp.text.contains("not available"),
                        "delete_track correctly refused to delete (disabled for wrong-track safety)")
         }
 
-        header("7. undo_structural × N — unwind create_track/set_output/insert_plugin (Edit ▸ Undo is the only working removal path now that delete_track is disabled)")
+        header("6. undo_structural × N — unwind create_track/set_output/insert_plugin (Edit ▸ Undo is the only working removal path now that delete_track is disabled)")
         if newTrack != nil {
             var names = await snapshotNames()
             var leftover = names.filter { !names0.contains($0) }

@@ -38,7 +38,7 @@ public struct CreateTrackTool: LogicTool {
 
 public struct RenameTrackTool: LogicTool {
     public let name = "rename_track"
-    public let description = "Rename a track. NOTE: renaming is not available via the Accessibility path in this release; this tool returns a structured error directing you to Logic directly. (Reading/selecting tracks still works via refresh_state/select_track.)"
+    public let description = "Rename a track. NOTE: renaming is not available via the Accessibility path in this release; this tool returns a structured error directing you to Logic directly. (Reading tracks still works via refresh_state/get_track.)"
     public let inputSchema = trackArgSchema(["to": .object(["type": .string("string")])], required: ["to"])
     let daemon: Daemon
     public func invoke(_ args: [String: Value]) async throws -> Value {
@@ -53,25 +53,6 @@ public struct RenameTrackTool: LogicTool {
             layer: "ax",
             expected: "rename '\(resolved)' in Logic directly",
             observed: "Logic's track-name fields are not AX-committable — AXSetValue changes the field cosmetically but never commits the edit (see Fixtures/ax/rename.txt)")
-    }
-}
-
-public struct SelectTrackTool: LogicTool {
-    public let name = "select_track"
-    public let description = "Select a track by name. KNOWN LIMITATION: AX cannot change Logic's track selection, so this does not actually change the selection in Logic — it only resolves the track. See Fixtures/ax/selection.txt."
-    public let inputSchema: Value = .object([
-        "type": .string("object"),
-        "properties": .object(["name": .object(["type": .string("string")])]),
-        "required": .array([.string("name")]),
-    ])
-    let daemon: Daemon
-    public func invoke(_ args: [String: Value]) async throws -> Value {
-        let name = try requireString(args, "name", tool: name)
-        let strip = try await daemon.mixerStrip(named: name)
-        // Selecting = pressing the strip's name field / header. Confirm via the resolved name.
-        try await daemon.menu.pressElement(strip)
-        let resolved = await daemon.ax.read(strip).name
-        return .object(["selected": .string(resolved)])
     }
 }
 
