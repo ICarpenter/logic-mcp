@@ -188,7 +188,10 @@ struct Smoke: AsyncParsableCommand {
         // tool's JSON were malformed or its own confirmation timed out.
         let namesAfterCreate = await snapshotNames()
         let diffCreated = namesAfterCreate.filter { !names0.contains($0) }
-        if newTrack == nil { newTrack = diffCreated.first }
+        // create_track's own "track" self-report can come back empty (flaky name read-back on a
+        // just-created, possibly off-screen strip); fall back to the independent diff, which is the
+        // real oracle the cleanup keys off anyway. Treat empty the same as missing.
+        if newTrack?.isEmpty ?? true { newTrack = diffCreated.first }
         checkpoint(newTrack != nil && !createResp.isError,
                    "new strip appeared (tool ok=\(!createResp.isError), diff-detected=\(diffCreated))")
         if diffCreated.count > 1 {

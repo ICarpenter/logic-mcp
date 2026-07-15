@@ -101,11 +101,13 @@ public struct SetOutputTool: LogicTool {
                               expected: "an output-routing button on the strip",
                               observed: "this strip has no routing slot in Logic's mixer (Stereo Out / Master don't have one) — nothing was pressed")
         }
-        try await daemon.menu.selectPopupLeaf(from: outBtn, title: dest)   // nested popup — see fixture
-        // Same async-AX-update hazard as create_track/delete_track's settleTracks: the output
-        // button's description can lag the popup-leaf press. settleOutput polls the STRIP'S
-        // OUTPUT — settleTracks polls the track-name list, the wrong oracle for this tool.
-        let now = await settleOutput(daemon, strip: strip) { $0?.caseInsensitiveCompare(dest) == .orderedSame }
+        try await daemon.menu.selectRoutingDestination(from: outBtn, dest: dest)   // search-driven popup (like insert_plugin)
+        // Confirm by RE-RESOLVING the strip by name each poll (settleOutputByName): selecting a
+        // destination re-renders the strip and — routing to a fresh bus — inserts an Aux that shifts
+        // indices, so the `strip` handle captured above goes STALE (real Logic read it "unreadable"
+        // for the whole timeout → a false "not confirmed" for a routing that landed). A fresh mixer
+        // walk sees the new destination. (settleOutput polls the STRIP'S OUTPUT, not the track list.)
+        let now = await settleOutputByName(daemon, track: track) { $0?.caseInsensitiveCompare(dest) == .orderedSame }
         guard now?.caseInsensitiveCompare(dest) == .orderedSame else {
             throw ToolFailure(error: "output change not confirmed", layer: "ax",
                               expected: dest, observed: now ?? "unreadable")
@@ -160,22 +162,30 @@ func settleTracks(_ daemon: Daemon, timeout: Duration = .seconds(3),
     return names
 }
 
-/// Poll the STRIP'S OUTPUT SLOT (re-reading via AX) until `condition` holds on the output
-/// string, or the deadline passes. `settleTracks` above polls the mixer's track-name list —
-/// the wrong oracle for `set_output`, whose effect lands on one strip's output button, not the
-/// strip list. Same async-AX-update hazard as `settleTracks`: a routing-popup leaf press's
-/// effect on the button's description can lag the press ("blind-press-then-read" is this
-/// codebase's top bug class). Polls every 50ms for up to `timeout`. Returns the final output
-/// string (nil if the strip has no readable output).
+/// Poll the STRIP'S OUTPUT SLOT (re-reading via AX) until `condition` holds on the output string,
+/// or the deadline passes — RE-RESOLVING the strip by NAME each poll (not a handle captured before
+/// the edit). `settleTracks` above polls the mixer's track-name list — the wrong oracle for
+/// `set_output`, whose effect lands on one strip's output button, not the strip list.
+///
+/// Why re-resolve by name: selecting a routing destination re-renders the strip — and routing to a
+/// fresh bus INSERTS an Aux, shifting strip indices — INVALIDATING the pre-press AXLayoutItem handle
+/// (real Logic, 2026-07-15). A handle-based poll read the stale handle's output as "unreadable"/old
+/// for the whole timeout, so `set_output` reported "output change not confirmed" for a routing that
+/// ACTUALLY LANDED — a false negative (same class as insert_plugin's). A fresh mixer walk each poll
+/// sees the new destination; a re-find that throws during the transient counts as "not settled yet".
 @discardableResult
-func settleOutput(_ daemon: Daemon, strip: AXHandle, timeout: Duration = .seconds(3),
-                  until condition: (String?) -> Bool) async -> String? {
-    var output = await daemon.ax.read(strip).output
+func settleOutputByName(_ daemon: Daemon, track: String, timeout: Duration = .seconds(3),
+                        until condition: (String?) -> Bool) async -> String? {
+    func read() async -> String? {
+        guard let s = try? await daemon.ax.find(track) else { return nil }
+        return await daemon.ax.read(s).output
+    }
+    var output = await read()
     if condition(output) { return output }
     let deadline = ContinuousClock.now + timeout
     while ContinuousClock.now < deadline {
         try? await Task.sleep(for: .milliseconds(50))
-        output = await daemon.ax.read(strip).output
+        output = await read()
         if condition(output) { return output }
     }
     return output
