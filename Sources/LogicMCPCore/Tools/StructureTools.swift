@@ -220,3 +220,28 @@ func settlePlugins(_ daemon: Daemon, strip: AXHandle, timeout: Duration = .secon
     }
     return names
 }
+
+/// Like `settlePlugins`, but RE-RESOLVES the strip by NAME on every poll instead of reusing a
+/// handle captured before the edit. Inserting a plugin makes Logic re-render the strip and
+/// INVALIDATE the pre-insert AXLayoutItem handle (real Logic, 2026-07-15, mcp_test.logicx): the
+/// reused handle then reads ZERO plugin groups for the full timeout, so `insert_plugin` reported
+/// "plugin insert not confirmed" for an insert that ACTUALLY LANDED — a false negative that invites
+/// a duplicate-insert retry. A fresh mixer walk each poll (what `axdump` does) sees the new group.
+/// A re-find that throws during the transient (strip momentarily gone) counts as "not settled yet".
+@discardableResult
+func settlePluginsByName(_ daemon: Daemon, track: String, timeout: Duration = .seconds(3),
+                         until condition: ([String]) -> Bool) async -> [String] {
+    func read() async -> [String] {
+        guard let s = try? await daemon.ax.find(track) else { return [] }
+        return await daemon.ax.pluginGroups(s).map(\.name)
+    }
+    var names = await read()
+    if condition(names) { return names }
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        try? await Task.sleep(for: .milliseconds(50))
+        names = await read()
+        if condition(names) { return names }
+    }
+    return names
+}

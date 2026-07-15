@@ -27,7 +27,7 @@ final class PluginInsertToolTests: XCTestCase {
     /// Pressing a plugin's "Stereo" leaf appends a plugin GROUP named after THAT plugin to the strip —
     /// the independent oracle: the wrong item pressed => the wrong group name => the tool's own
     /// pluginGroups verification fails.
-    func rig(configLatency: Int = 0) -> Rig {
+    func rig(configLatency: Int = 0, staleStripOnInsert: Bool = false) -> Rig {
         let strip = FakeAXNode(role: "AXLayoutItem", description: "vox")
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
         let window = FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])
@@ -46,7 +46,17 @@ final class PluginInsertToolTests: XCTestCase {
             stereo.onPress = {
                 let group = FakeAXNode(role: "AXGroup", description: name,
                                        children: [FakeAXNode(role: "AXButton", description: "open")])
-                strip.scheduleChildAppend(group, afterReads: configLatency)
+                if staleStripOnInsert {
+                    // Model Logic RE-CREATING the strip element on insert: the AXLayoutItem handle the
+                    // tool captured BEFORE the press is now detached (no plugin group), while a FRESH
+                    // strip of the same name carries the group. Only re-resolving the strip by NAME each
+                    // poll (not reusing the stale handle) can confirm the insert.
+                    let fresh = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [group])
+                    area.children.removeAll { $0 === strip }
+                    area.children.append(fresh)
+                } else {
+                    strip.scheduleChildAppend(group, afterReads: configLatency)
+                }
             }
             let submenu = FakeAXNode(role: "AXMenu", children: [stereo, dualMono])
             return FakeAXNode(role: "AXMenuItem", title: name, children: [submenu])
@@ -154,5 +164,23 @@ final class PluginInsertToolTests: XCTestCase {
         let res = try await InsertPluginTool(daemon: d).invoke(["track": .string("vox"), "name": .string("Compressor")])
         guard case .object(let o) = res else { return XCTFail() }
         XCTAssertEqual(o["plugin"], .string("Compressor"), "settlePlugins should poll until the async group-append lands")
+    }
+
+    /// (6) FALSE-NEGATIVE REGRESSION (real Logic, 2026-07-15, mcp_test.logicx): inserting a plugin
+    /// makes Logic RE-RENDER the strip and invalidate the AXLayoutItem handle captured before the
+    /// press. The old `settlePlugins(strip:)` polled that stale handle, read ZERO groups for the full
+    /// timeout, and reported "plugin insert not confirmed" for an insert that ACTUALLY LANDED — a
+    /// false negative that invites a duplicate-insert retry. The confirm must re-resolve the strip by
+    /// NAME (a fresh mixer walk, like axdump) so it sees the new group. Here pressing "Stereo" REPLACES
+    /// the strip node; the pre-insert handle stays empty, only a re-find sees "Compressor".
+    func testInsertConfirmsAfterStripHandleGoesStale() async throws {
+        let r = rig(staleStripOnInsert: true)
+        let d = await daemon(r.p)
+        let res = try await InsertPluginTool(daemon: d).invoke(["track": .string("vox"), "name": .string("Compressor")])
+        guard case .object(let o) = res else { return XCTFail("insert should CONFIRM via a re-find, not false-negative") }
+        XCTAssertEqual(o["plugin"], .string("Compressor"))
+        let strip = try await d.ax.find("vox")   // fresh strip, found by name
+        let groups = await d.ax.pluginGroups(strip).map(\.name)
+        XCTAssertEqual(groups, ["Compressor"], "the re-found strip carries exactly the inserted group")
     }
 }
