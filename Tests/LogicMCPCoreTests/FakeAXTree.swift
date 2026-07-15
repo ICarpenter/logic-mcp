@@ -7,7 +7,9 @@ import Foundation
 final class FakeAXNode {
     let role: String
     let subrole: String?
-    let description: String?
+    /// `var`, not `let`: `testRenamedBusIsStillFoundAsTheOutputSlot` mutates a bus button's
+    /// description in place to prove the output slot is found positionally, not by name match.
+    var description: String?
     var title: String?
     var stringValue: String?
     var numberValue: Double?

@@ -1,0 +1,122 @@
+# Special mixer strips + the TWO "Mixer" layout areas — captured 2026-07-14, Logic Pro 12.3
+# (Mixer window OPEN, Logic BACKGROUNDED). This fixture is PARSED by the test suite
+# (Tests/LogicMCPCoreTests/AXFixture.swift) and drives the BUG 1 / BUG 2 regression tests —
+# it is executable ground truth, not documentation.
+#
+# ── BUG 1: the output-routing slot must be found POSITIVELY ────────────────────────────────
+# The routing slot is the IMMEDIATE NEXT SIBLING of the `AXPopUpButton description="group"`,
+# and only if it is a PLAIN AXButton (no subrole, no value) whose description is not one of the
+# fixed control labels. Its description IS the destination ("Bus 21", "Stereo Output") — which
+# is why the old by-EXCLUSION search (first AXButton whose description isn't a known label)
+# looked plausible, and why it is WRONG:
+#
+#   * Stereo Out has NO routing slot at all → by-exclusion matched `bounce` (an AXSwitch).
+#   * Master    has NO routing slot at all → by-exclusion matched `dim`    (an AXSwitch).
+#
+# Both were reported live as the strip's `output` in refresh_state. Do NOT pattern-match the
+# description against bus-name shapes (`Bus \d+`) either — buses are RENAMABLE in Logic.
+#
+# Fixed control labels seen on strips (the negative guard; gathered from this capture and
+# Fixtures/ax/mixer_strip.txt): name, mute, solo, volume fader, fader knob, volume fader level,
+# peak level meter, pan, knob readout, automation, list, group, send button, audio plug-in,
+# MIDI plug-in, insert bar, EQ, gain reduction meter, setting, channel mode, bypass, open,
+# bounce, dim, mastering assistant, add aux, record.
+#
+# ── BUG 2: BOTH windows contain an `AXLayoutArea description="Mixer"` ──────────────────────
+# The arrange window's INSPECTOR holds a MINI-MIXER (the selected track + its output, 2 strips)
+# with the SAME role+description as the real thing. With the Mixer WINDOW closed it is the only
+# one left, and binding it silently REPLACES the shadow model with 2 strips while reporting
+# success. Only bind a mixer area whose containing WINDOW's title contains "Mixer".
+#
+# (The strip preludes below — name/mute/solo/fader/pan/automation — are the standard strip
+# shape already captured verbatim in Fixtures/ax/mixer_strip.txt; the lines from the `group`
+# popup onward are the live capture that found BUG 1.)
+
+AXWindow title="Untitled 1 - Mixer: Tracks"
+  AXLayoutArea description="Mixer"
+    AXLayoutItem description="Liverpool"
+      AXTextField description="name" value="Liverpool" settable=false
+      AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+      AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+      AXSlider description="volume fader" value="173" settable=true
+      AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+      AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+      AXSlider description="pan" value="0" settable=true
+      AXGroup description="Read, automation enabled" settable=false
+        AXCheckBox description="automation" value="1" settable=false
+        AXButton description="list" settable=false
+      AXPopUpButton description="group" title="group" settable=false
+      AXButton description="Bus 21" settable=false
+      AXButton description="send button" settable=false
+      AXButton description="audio plug-in" settable=false
+      AXButton description="insert bar" settable=false
+      AXButton description="EQ" value="on" settable=false
+      AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+      AXButton description="setting" settable=false
+    AXLayoutItem description="Inst 2"
+      AXTextField description="name" value="Inst 2" settable=false
+      AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+      AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+      AXSlider description="volume fader" value="173" settable=true
+      AXTextField description="volume fader level" title="volume fader level, -3.0 dB" settable=false
+      AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+      AXSlider description="pan" value="0" settable=true
+      AXPopUpButton description="group" title="group" settable=false
+      AXButton description="Bus 9" settable=false
+      AXButton description="send button" settable=false
+      AXButton description="audio plug-in" settable=false
+      AXButton description="MIDI plug-in" settable=false
+      AXButton description="setting" settable=false
+    AXLayoutItem description="Aux 1"
+      AXTextField description="name" value="Aux 1" settable=false
+      AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+      AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+      AXSlider description="volume fader" value="173" settable=true
+      AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+      AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+      AXSlider description="pan" value="0" settable=true
+      AXPopUpButton description="group" title="group" settable=false
+      AXButton description="Stereo Output" settable=false
+      AXButton description="send button" settable=false
+      AXButton description="audio plug-in" settable=false
+      AXButton description="setting" settable=false
+    AXLayoutItem description="Stereo Out"
+      AXTextField description="name" value="Stereo Out" settable=false
+      AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+      AXSlider description="volume fader" value="173" settable=true
+      AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+      AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+      AXPopUpButton description="group" title="group" settable=false
+      AXButton description="audio plug-in" settable=false
+      AXButton description="insert bar" settable=false
+      AXButton description="mastering assistant" settable=false
+      AXButton subrole="AXSwitch" description="bounce" value="off" settable=false
+      AXButton description="setting" settable=false
+    AXLayoutItem description="Master"
+      AXTextField description="name" value="Master" settable=false
+      AXSlider description="volume fader" value="173" settable=true
+      AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+      AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+      AXPopUpButton description="group" title="group" settable=false
+      AXButton subrole="AXSwitch" description="dim" value="off" settable=false
+      AXButton description="setting" settable=false
+AXWindow title="Untitled 1 - Tracks"
+  AXLayoutArea description="Mixer"
+    AXLayoutItem description="Liverpool"
+      AXTextField description="name" value="Liverpool" settable=false
+      AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+      AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+      AXSlider description="volume fader" value="173" settable=true
+      AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+      AXSlider description="pan" value="0" settable=true
+      AXPopUpButton description="group" title="group" settable=false
+      AXButton description="Bus 21" settable=false
+    AXLayoutItem description="Aux 1"
+      AXTextField description="name" value="Aux 1" settable=false
+      AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+      AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+      AXSlider description="volume fader" value="173" settable=true
+      AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+      AXSlider description="pan" value="0" settable=true
+      AXPopUpButton description="group" title="group" settable=false
+      AXButton description="Stereo Output" settable=false

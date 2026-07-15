@@ -9,6 +9,9 @@ final class AXMixerTests: XCTestCase {
                 FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "solo", stringValue: "off"),
                 FakeAXNode(role: "AXStaticText", description: "volume fader level", title: db),
                 FakeAXNode(role: "AXSlider", description: "pan", value: pan, settable: true),
+                // "group" popup, then the routing slot — the real strip's shape, and the
+                // structural anchor AXBridge.outputButton uses to identify the slot.
+                FakeAXNode(role: "AXPopUpButton", description: "group", title: "group"),
                 FakeAXNode(role: "AXButton", description: "Bus 9"),
             ])
         }
@@ -17,7 +20,7 @@ final class AXMixerTests: XCTestCase {
             strip("bass", db: "volume fader level, -6.0 dB", mute: "on", pan: 10),
         ])
         let root = FakeAXNode(role: "AXApplication",
-                              children: [FakeAXNode(role: "AXWindow", children: [area])])
+                              children: [FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])])
         let model = ProjectModel()
         let mixer = AXMixer(bridge: AXBridge(provider: FakeAXProvider(root: root)), model: model)
 
