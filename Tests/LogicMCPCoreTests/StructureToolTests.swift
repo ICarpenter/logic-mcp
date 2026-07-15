@@ -64,23 +64,6 @@ final class StructureToolTests: XCTestCase {
         XCTAssertEqual(o["track"], .string("Audio 1"))
     }
 
-    /// select_track had zero coverage before this. Confirms it resolves case-insensitively /
-    /// by unique prefix, actually performs an AXPress on the resolved strip (not just a find()),
-    /// and returns the resolved (canonical) name rather than echoing the input.
-    func testSelectTrackPressesAndReturnsResolvedName() async throws {
-        let vox = FakeAXNode(role: "AXLayoutItem", description: "Vocals")
-        var pressed = false
-        vox.onPress = { pressed = true }
-        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [vox])
-        let window = FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])
-        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
-        let d = await daemon(p)
-        let r = try await SelectTrackTool(daemon: d).invoke(["name": .string("vo")])
-        guard case .object(let o) = r else { return XCTFail() }
-        XCTAssertEqual(o["selected"], .string("Vocals"))
-        XCTAssertTrue(pressed, "select_track should press the resolved strip")
-    }
-
     /// rename_track is deferred (Fixtures/ax/rename.txt: AXSetValue on Logic's track-name fields
     /// is cosmetic-only and never commits) — it must resolve the track via AXBridge.find() FIRST
     /// (so a bad name still gets the precise `layer:"ax"` find() error) and then always throw the

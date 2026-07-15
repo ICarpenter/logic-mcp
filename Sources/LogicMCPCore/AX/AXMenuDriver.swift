@@ -136,8 +136,9 @@ public actor AXMenuDriver {
         try p.perform(.press, on: btn)
     }
 
-    /// Press an arbitrary already-located element (used by later select_track/delete_track tools
-    /// that find a strip/menu element via `descendant` and just need a plain AXPress).
+    /// Press an arbitrary already-located element via a plain AXPress. Retained as a low-level
+    /// primitive (no current tool presses a strip — AX cannot change Logic's track selection, so
+    /// select_track was removed and delete_track is disabled; see Fixtures/ax/selection.txt).
     public func pressElement(_ h: AXHandle) throws { try p.perform(.press, on: h) }
 
     /// Open a popup on `control` (AXShowMenu, else AXPress), descend the item title `path`, press
