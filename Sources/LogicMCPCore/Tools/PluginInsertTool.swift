@@ -23,10 +23,12 @@ public struct InsertPluginTool: LogicTool {
                               expected: "the audio plug-in slot", observed: "none")
         }
         try await daemon.menu.selectPluginFromPopup(from: slot, plugin: plugin)
-        // Same async-AX-update hazard as create_track/delete_track/set_output's settle helpers:
-        // the popup-leaf press's effect on the strip's plugin groups can lag the press —
-        // settle-poll instead of trusting a single immediate re-read.
-        let groups = await settlePlugins(daemon, strip: strip) { names in
+        // Two async-AX hazards after the leaf press: (1) the new group can LAG the press, and
+        // (2) the press RE-RENDERS the strip and invalidates `strip` (the handle captured above) —
+        // real Logic reads ZERO groups off the stale handle forever, a false "not confirmed" for an
+        // insert that landed. So confirm by RE-RESOLVING the strip by name each poll (a fresh mixer
+        // walk), never the pre-insert handle.
+        let groups = await settlePluginsByName(daemon, track: track) { names in
             names.contains { $0.caseInsensitiveCompare(plugin) == .orderedSame }
         }
         guard groups.contains(where: { $0.caseInsensitiveCompare(plugin) == .orderedSame }) else {
