@@ -3,117 +3,156 @@ import MCP
 @testable import LogicMCPCore
 
 final class PluginInsertToolTests: XCTestCase {
-    /// Builds a strip with a THREE-level insert popup on its "audio plug-in" slot, per
-    /// Fixtures/ax/popup_plugin.txt: top level holds RECENT plugins ("Channel EQ" ▸) AND
-    /// categories ("EQ" ▸); a category's submenu holds plugin names ("Vintage EQ" ▸ under "EQ");
-    /// a plugin's submenu holds the CHANNEL-CONFIG leaves (Stereo / Dual Mono) — the pressable
-    /// leaf, not the plugin name. "Channel EQ" and "Vintage EQ" are DELIBERATELY different names
-    /// so a search that only looked at the top level could never find "Vintage EQ" — that's what
-    /// makes test (b) below a genuine proof of the one-category-deep descent, not a tautology.
-    ///
-    /// `configLatency`, when > 0, is passed as `afterReads` to `scheduleChildAppend` on the strip
-    /// instead of appending the new plugin group synchronously — used by test (d) to model
-    /// Logic's async AX-tree update lag after the popup-leaf press.
-    func stripWithPluginPopup(configLatency: Int = 0) -> (p: FakeAXProvider, strip: FakeAXNode, slot: FakeAXNode) {
-        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox")
+    /// Everything a test needs to poke at the search-popup fixture.
+    struct Rig {
+        let p: FakeAXProvider
+        let strip: FakeAXNode
+        let slot: FakeAXNode
+        let area: FakeAXNode
+        let search: FakeAXNode    // the AXSearchField the driver must type into
+    }
 
-        func configLeaves(pluginName: String) -> (menu: FakeAXNode, stereo: FakeAXNode) {
+    /// Builds a mixer window holding a single "vox" strip whose "audio plug-in" slot, WHEN PRESSED,
+    /// opens a search popup as a SIBLING OF THE STRIPS (a child of the mixer AXLayoutArea) — the real
+    /// structure from Fixtures/ax/popup_plugin_search.txt, NOT a menu under the pressed button.
+    ///
+    /// The popup is an AXMenu whose first item wraps an AXSearchField and whose remaining items are
+    /// plugins. Its children are computed by a `dynamicChildren` FILTER keyed on the search field's
+    /// current value — this is the load-bearing bit that makes the tests non-tautological:
+    ///   * empty query    -> a small RECENT list that DOES NOT contain the searched plugin, so the
+    ///                       tool cannot succeed without TYPING first;
+    ///   * non-empty query -> every catalog plugin whose title CONTAINS the query (case-insensitive),
+    ///                       in catalog order (a partial like "Squash Compressor" precedes the exact
+    ///                       "Compressor"), so grabbing the first result would insert the WRONG plugin.
+    /// Pressing a plugin's "Stereo" leaf appends a plugin GROUP named after THAT plugin to the strip —
+    /// the independent oracle: the wrong item pressed => the wrong group name => the tool's own
+    /// pluginGroups verification fails.
+    func rig(configLatency: Int = 0) -> Rig {
+        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox")
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
+        let window = FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
+
+        // --- the search field (a settable AXSearchField), wrapped in its own AXMenuItem ---
+        let clearBtn = FakeAXNode(role: "AXButton")
+        let search = FakeAXNode(role: "AXTextField", subrole: "AXSearchField", settable: true,
+                                children: [clearBtn])
+        let searchItem = FakeAXNode(role: "AXMenuItem", children: [search])
+
+        // --- a plugin catalog item: title + submenu of channel-config leaves ("Stereo"/"Dual Mono") ---
+        func pluginItem(_ name: String) -> FakeAXNode {
             let stereo = FakeAXNode(role: "AXMenuItem", title: "Stereo")
             let dualMono = FakeAXNode(role: "AXMenuItem", title: "Dual Mono")
             stereo.onPress = {
-                let group = FakeAXNode(role: "AXGroup", description: pluginName,
+                let group = FakeAXNode(role: "AXGroup", description: name,
                                        children: [FakeAXNode(role: "AXButton", description: "open")])
                 strip.scheduleChildAppend(group, afterReads: configLatency)
             }
-            return (FakeAXNode(role: "AXMenu", children: [stereo, dualMono]), stereo)
+            let submenu = FakeAXNode(role: "AXMenu", children: [stereo, dualMono])
+            return FakeAXNode(role: "AXMenuItem", title: name, children: [submenu])
         }
 
-        // Top-level (Recent): "Channel EQ" ▸ [Stereo | Dual Mono]
-        let (channelEQSubmenu, _) = configLeaves(pluginName: "Channel EQ")
-        let channelEQItem = FakeAXNode(role: "AXMenuItem", title: "Channel EQ", children: [channelEQSubmenu])
+        // Catalog order deliberately puts a PARTIAL match ("Squash Compressor") BEFORE the exact
+        // "Compressor", so an exact-match-discipline bug (grab first result) would be caught.
+        let catalog = ["Squash Compressor", "Compressor", "UAD 4K Buss Compressor",
+                       "Channel EQ", "Vintage EQ"].map(pluginItem)
+        // Recent (shown before any typing) deliberately EXCLUDES "Compressor" — the tool can only
+        // reach it by TYPING and re-reading the FILTERED list. This is what makes setString essential.
+        let recent = ["Noise Gate", "Channel EQ"].map(pluginItem)
 
-        // Category "EQ" ▸ "Vintage EQ" ▸ [Stereo | Dual Mono] — ONE level deeper.
-        let (vintageEQSubmenu, _) = configLeaves(pluginName: "Vintage EQ")
-        let vintageEQItem = FakeAXNode(role: "AXMenuItem", title: "Vintage EQ", children: [vintageEQSubmenu])
-        let eqCategorySubmenu = FakeAXNode(role: "AXMenu", children: [vintageEQItem])
-        let eqCategoryItem = FakeAXNode(role: "AXMenuItem", title: "EQ", children: [eqCategorySubmenu])
+        let popup = FakeAXNode(role: "AXMenu", children: [searchItem])
+        popup.dynamicChildren = {
+            let q = search.stringValue ?? ""
+            if q.isEmpty { return [searchItem] + recent }
+            return [searchItem] + catalog.filter { ($0.title ?? "").localizedCaseInsensitiveContains(q) }
+        }
 
-        let topMenu = FakeAXNode(role: "AXMenu", children: [channelEQItem, eqCategoryItem])
-        let slot = FakeAXNode(role: "AXButton", description: "audio plug-in", children: [topMenu])
+        // The slot opens the popup as a SIBLING of the strips on press, and dismisses it on cancel.
+        let slot = FakeAXNode(role: "AXButton", description: "audio plug-in")
+        slot.onPress = { if !area.children.contains(where: { $0 === popup }) { area.children.append(popup) } }
+        slot.onCancel = { area.children.removeAll { $0 === popup } }
         strip.children.append(slot)
 
-        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
-        let window = FakeAXNode(role: "AXWindow", children: [area])
-        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
-        return (p, strip, slot)
+        return Rig(p: p, strip: strip, slot: slot, area: area, search: search)
     }
 
     func daemon(_ p: FakeAXProvider) async -> Daemon { await Daemon(wire: InMemoryWire(), axProvider: p) }
 
-    /// (a) A TOP-LEVEL (Recent) plugin is found and its default "Stereo" config leaf pressed;
-    /// re-reading `pluginGroups` confirms it landed.
-    func testInsertTopLevelRecentPluginSucceeds() async throws {
-        let (p, _, _) = stripWithPluginPopup()
-        let d = await daemon(p)
-        let r = try await InsertPluginTool(daemon: d).invoke(["track": .string("vox"), "name": .string("Channel EQ")])
-        guard case .object(let o) = r else { return XCTFail() }
+    /// (1) HAPPY PATH + type-then-select oracle: insert "Compressor" — the tool must type the query
+    /// into the search field, pick the EXACT filtered match, press its "Stereo" leaf, and confirm via
+    /// pluginGroups. Independent oracles: the search field RECORDED a setString of "Compressor", and
+    /// the group that landed is named exactly "Compressor".
+    func testInsertTypesQueryAndSelectsExactMatch() async throws {
+        let r = rig()
+        let d = await daemon(r.p)
+        let res = try await InsertPluginTool(daemon: d).invoke(["track": .string("vox"), "name": .string("Compressor")])
+        guard case .object(let o) = res else { return XCTFail() }
         XCTAssertEqual(o["track"], .string("vox"))
-        XCTAssertEqual(o["plugin"], .string("Channel EQ"))
+        XCTAssertEqual(o["plugin"], .string("Compressor"))
+        XCTAssertEqual(r.search.setStringLog, ["Compressor"], "the driver must TYPE the query into the search field")
         let strip = try await d.ax.find("vox")
         let groups = await d.ax.pluginGroups(strip).map(\.name)
-        XCTAssertTrue(groups.contains("Channel EQ"))
+        XCTAssertEqual(groups, ["Compressor"], "the EXACT plugin's leaf must have been pressed")
     }
 
-    /// (b) "Vintage EQ" exists ONLY one category ("EQ") deep — it is NOT a top-level item. This
-    /// test would FAIL if `selectPluginFromPopup` only scanned the top level (it would report
-    /// "plugin 'Vintage EQ' not found"), so it genuinely exercises the nested descent.
-    func testInsertPluginFoundOneCategoryDeepSucceeds() async throws {
-        let (p, _, _) = stripWithPluginPopup()
-        let d = await daemon(p)
-        let r = try await InsertPluginTool(daemon: d).invoke(["track": .string("vox"), "name": .string("Vintage EQ")])
-        guard case .object(let o) = r else { return XCTFail() }
-        XCTAssertEqual(o["plugin"], .string("Vintage EQ"))
+    /// (2) EXACT-MATCH DISCIPLINE: the filtered results list a PARTIAL ("Squash Compressor") BEFORE
+    /// the exact "Compressor". Grabbing the first result would insert "Squash Compressor"; the tool
+    /// must select the exact title. Proven by which group lands (pressing the wrong leaf would name
+    /// the group "Squash Compressor" and then fail the tool's pluginGroups verification).
+    func testInsertPicksExactMatchNotFirstPartial() async throws {
+        let r = rig()
+        let d = await daemon(r.p)
+        _ = try await InsertPluginTool(daemon: d).invoke(["track": .string("vox"), "name": .string("Compressor")])
         let strip = try await d.ax.find("vox")
         let groups = await d.ax.pluginGroups(strip).map(\.name)
-        XCTAssertTrue(groups.contains("Vintage EQ"), "expected the nested (one-category-deep) plugin to be found and inserted")
+        XCTAssertTrue(groups.contains("Compressor"), "the exact match must have been inserted")
+        XCTAssertFalse(groups.contains("Squash Compressor"), "must NOT have pressed the first partial match")
     }
 
-    /// (c) An unknown plugin name throws a structured layer:"ax" error listing the available
-    /// titles (top level + one category deep), and leaves the popup dismissed.
-    func testInsertUnknownPluginThrowsAXWithAvailableTitles() async throws {
-        let (p, _, _) = stripWithPluginPopup()
-        let d = await daemon(p)
+    /// (3) NOT FOUND: a query with no exact match throws a structured layer:"ax" error whose
+    /// `observed` lists the FILTERED titles actually seen (diagnostic), and the popup is DISMISSED —
+    /// no AXMenu left hanging under the mixer area.
+    func testInsertUnknownPluginThrowsWithFilteredTitlesAndDismisses() async throws {
+        let r = rig()
+        let d = await daemon(r.p)
         do {
-            _ = try await InsertPluginTool(daemon: d).invoke(["track": .string("vox"), "name": .string("Nope Plugin")])
+            _ = try await InsertPluginTool(daemon: d).invoke(["track": .string("vox"), "name": .string("Compress")])
             XCTFail("expected a ToolFailure")
         } catch let f as ToolFailure {
             XCTAssertEqual(f.layer, "ax")
-            XCTAssertTrue(f.observed?.contains("Channel EQ") ?? false, "should list available titles: \(f.observed ?? "nil")")
+            let obs = f.observed ?? ""
+            XCTAssertTrue(obs.contains("Squash Compressor"), "observed should list the FILTERED titles: \(obs)")
+            XCTAssertFalse(obs.contains("Noise Gate"), "observed must be the FILTERED list, not the pre-typing recent list")
         }
+        XCTAssertFalse(r.area.children.contains { $0.role == "AXMenu" },
+                       "the popup must be dismissed on a miss — no modal menu left open")
     }
 
-    /// (d) Regression test for the settle-poll: pressing the config leaf schedules the new plugin
-    /// group's appearance via `scheduleChildAppend(_:afterReads:)` instead of appending it
-    /// synchronously, so it stays invisible to `pluginGroups(strip)` reads for a while after the
-    /// press — mirroring `testCreateTrackWaitsForAsyncStripAppearance` /
-    /// `testSetOutputSettlesThroughAsyncLag`. `AXBridge.pluginGroups(strip)` calls
-    /// `children(of: strip)` EXACTLY ONCE per invocation (verified by reading its source: unlike
-    /// `AXBridge.read(strip)`, which probes a strip's children ~6x via four `control()` calls plus
-    /// the output-button scan, `pluginGroups` calls `p.children(of: strip)` a single time up front
-    /// and only recurses into EACH CANDIDATE GROUP's own children, never re-reading the strip's
-    /// children a second time). So `afterReads: 2` is the smallest value that is NOT tautological
-    /// here: the settle helper's first (immediate, pre-sleep) call decrements the countdown from 2
-    /// to 1 and still sees the stale (pre-insert) group list, so the condition is false and the
-    /// poll loop's `Task.sleep` + retry must actually run before the second call decrements 1 to 0
-    /// and reveals the new group. `afterReads: 1` would reveal it on that very first call and prove
-    /// nothing about the poll loop. Against a `settlePlugins` reduced to a single immediate read
-    /// (no loop) this test FAILS with "plugin insert not confirmed" (verified by temporarily
-    /// commenting out the poll loop's `while` body); the real settle-poll waits it out and succeeds.
-    func testInsertPluginSettlesThroughAsyncLag() async throws {
-        let (p, _, _) = stripWithPluginPopup(configLatency: 2)
-        let d = await daemon(p)
-        let r = try await InsertPluginTool(daemon: d).invoke(["track": .string("vox"), "name": .string("Channel EQ")])
-        guard case .object(let o) = r else { return XCTFail() }
-        XCTAssertEqual(o["plugin"], .string("Channel EQ"), "settlePlugins should poll until the async group-append lands")
+    /// (4) KEYSTONE REGRESSION — the popup is a SIBLING of the strips, NOT under the pressed slot.
+    /// The old `selectPluginFromPopup` did `menuItems(under: slot)` and found nothing here (the slot
+    /// has NO menu child); this proves the popup is located by walking the WINDOW tree instead. It
+    /// FAILS against the old code path ("plugin ... not found").
+    func testPopupIsSiblingOfStripsNotUnderSlot() async throws {
+        let r = rig()
+        let d = await daemon(r.p)
+        _ = try await InsertPluginTool(daemon: d).invoke(["track": .string("vox"), "name": .string("Channel EQ")])
+        XCTAssertFalse(r.slot.children.contains { $0.role == "AXMenu" },
+                       "regression guard: the popup must NOT attach under the pressed slot")
+        let strip = try await d.ax.find("vox")
+        let groups = await d.ax.pluginGroups(strip).map(\.name)
+        XCTAssertTrue(groups.contains("Channel EQ"), "the sibling popup must be found and the plugin inserted")
+    }
+
+    /// (5) SETTLE-POLL through async AX lag: pressing the config leaf schedules the plugin group's
+    /// appearance via scheduleChildAppend(afterReads:) so it stays invisible to pluginGroups for a
+    /// couple of reads after the press. The tool's settlePlugins poll must wait it out. afterReads:2
+    /// is the smallest non-tautological value (see StructureTools.settlePlugins / the note carried
+    /// from the prior suite).
+    func testInsertSettlesThroughAsyncLag() async throws {
+        let r = rig(configLatency: 2)
+        let d = await daemon(r.p)
+        let res = try await InsertPluginTool(daemon: d).invoke(["track": .string("vox"), "name": .string("Compressor")])
+        guard case .object(let o) = res else { return XCTFail() }
+        XCTAssertEqual(o["plugin"], .string("Compressor"), "settlePlugins should poll until the async group-append lands")
     }
 }

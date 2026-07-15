@@ -6,37 +6,60 @@ public actor AXBridge {
     private let p: AXProvider
     public init(provider: AXProvider) { self.p = provider }
 
-    /// Depth-first search for `AXLayoutArea desc="Mixer"` under any window. NOT simply the first
-    /// match: the Arrange window's Inspector contains a MINI-MIXER with the SAME role+description,
-    /// showing only the selected track's strip (+ its output) — e.g. ["vox", "Aux 1"] instead of
-    /// all 20 strips. Taking the first match across `windows()` worked before only by window-
-    /// ordering luck (the real Mixer window happened to come first); if that order shifted,
-    /// `stripHandles()` would silently read 1–2 strips instead of 20 (see Fixtures/ax/rename.txt).
-    /// Disambiguate across EVERY window by picking the candidate area with the MOST `AXLayoutItem`
-    /// children (the real mixer always has more strips than a single-track mini-mixer), tie-
-    /// breaking on the containing window's title mentioning "Mixer".
+    /// The `AXLayoutArea desc="Mixer"` of Logic's MIXER WINDOW — bind-or-throw, never degrade.
+    ///
+    /// BUG 2 (real Logic, 2026-07-14): the arrange window's Inspector contains a MINI-MIXER with
+    /// the SAME role+description, showing only the selected track's strip (+ its output). With
+    /// the Mixer WINDOW closed it is the only `AXLayoutArea "Mixer"` left, so the old search bound
+    /// it and `refresh_state` returned 2 strips REPORTING SUCCESS — silently REPLACING the shadow
+    /// model (the real project's tracks vanished from it, and since every mixer tool addresses
+    /// tracks BY NAME, lookups then missed or hit the wrong strip). The old "pick the area with
+    /// the most AXLayoutItems" heuristic does not catch that case at all: with one candidate, the
+    /// mini-mixer IS the max.
+    ///
+    /// So: only ever bind a mixer area whose containing WINDOW is titled "…Mixer…"
+    /// (`"Untitled 1 - Mixer: Tracks"`, vs the arrange window's `"Untitled 1 - Tracks"` — see
+    /// Fixtures/ax/strip_special.txt). If there is none, THROW; the caller
+    /// (`Daemon.ensureMixerWindow()`) self-heals by pressing `Window ▸ Open Mixer` and retrying.
+    /// The most-strips tiebreak is kept for the pathological case of a PROJECT whose name itself
+    /// contains "Mixer" (then the arrange window's title matches too, and the real mixer still
+    /// wins on strip count).
     private func mixerArea() throws -> AXHandle {
+        let areas = mixerAreas()
+        if areas.count == 1 { return areas[0] }   // the normal case
+        guard let best = areas.max(by: { stripCount($0) < stripCount($1) }) else {
+            throw ToolFailure(error: "no mixer surface", layer: "ax",
+                              expected: "an open Mixer window",
+                              observed: "no AXLayoutArea \"Mixer\" inside a window titled \"…Mixer…\" — open the Mixer (Window ▸ Open Mixer / ⌘2). The arrange window's Inspector mini-mixer is deliberately NOT used: it shows only the selected track and would corrupt the shadow model.")
+        }
+        return best
+    }
+
+    /// Mixer layout areas that live inside a window whose TITLE contains "Mixer" — i.e. the real
+    /// Mixer window ("Untitled 1 - Mixer: Tracks"), never the arrange window ("Untitled 1 -
+    /// Tracks") whose Inspector holds a mini-mixer with the identical role+description.
+    private func mixerAreas() -> [AXHandle] {
         func rec(_ h: AXHandle, _ d: Int) -> AXHandle? {
             if d > 8 { return nil }
             if p.string(.role, of: h) == "AXLayoutArea", p.string(.description, of: h) == "Mixer" { return h }
             for c in p.children(of: h) { if let f = rec(c, d + 1) { return f } }
             return nil
         }
-        let candidates: [(area: AXHandle, stripCount: Int, windowTitleHasMixer: Bool)] = p.windows().compactMap { w in
-            guard let a = rec(w, 0) else { return nil }
-            let stripCount = p.children(of: a).filter { p.string(.role, of: $0) == "AXLayoutItem" }.count
-            let titleHasMixer = (p.string(.title, of: w) ?? "").contains("Mixer")
-            return (a, stripCount, titleHasMixer)
-        }
-        guard let best = candidates.max(by: { lhs, rhs in
-            if lhs.stripCount != rhs.stripCount { return lhs.stripCount < rhs.stripCount }
-            return (lhs.windowTitleHasMixer ? 1 : 0) < (rhs.windowTitleHasMixer ? 1 : 0)
-        }) else {
-            throw ToolFailure(error: "no mixer surface", layer: "ax",
-                              expected: "an open Mixer window or pane",
-                              observed: "no AXLayoutArea \"Mixer\" in any window — open the Mixer (View ▸ Show Mixer)")
-        }
-        return best.area
+        return p.windows()
+            .filter { (p.string(.title, of: $0) ?? "").localizedCaseInsensitiveContains("Mixer") }
+            .compactMap { rec($0, 0) }
+    }
+
+    private func stripCount(_ area: AXHandle) -> Int {
+        p.children(of: area).filter { p.string(.role, of: $0) == "AXLayoutItem" }.count
+    }
+
+    /// Is Logic's Mixer WINDOW open? (i.e. does a window whose title contains "Mixer" hold a
+    /// mixer layout area). The arrange window's Inspector mini-mixer does NOT count. The
+    /// no-focus oracle for `Daemon.ensureMixerWindow()`, which presses `Window ▸ Open Mixer`
+    /// when this is false and settle-polls it back to true.
+    public func hasMixerWindow() -> Bool {
+        !mixerAreas().isEmpty
     }
 
     public func stripHandles() throws -> [(name: String, handle: AXHandle)] {
@@ -78,20 +101,55 @@ public actor AXBridge {
         }
         return p.children(of: h).lazy.compactMap { rec($0, 0) }.first
     }
-    /// The output-routing button has a dynamic description (the bus name), so it is found
-    /// by exclusion: the AXButton whose description is none of the fixed control labels.
+    /// The fixed control labels a strip's children carry (Fixtures/ax/mixer_strip.txt +
+    /// strip_special.txt). Only a NEGATIVE guard on the structural match below — never the
+    /// primary discriminator.
+    private static let fixedStripLabels: Set<String> = [
+        "name", "mute", "solo", "volume fader", "fader knob", "volume fader level",
+        "peak level meter", "pan", "knob readout", "automation", "list", "group",
+        "send button", "audio plug-in", "MIDI plug-in", "insert bar", "channel mode",
+        "EQ", "gain reduction meter", "setting", "bypass", "open",
+        "bounce", "dim", "mastering assistant", "add aux", "record",
+    ]
+
+    /// The strip's output-routing slot, or nil if the strip HAS NO OUTPUT SLOT.
+    ///
+    /// BUG 1 (real Logic, 2026-07-14): this used to find the slot by EXCLUSION — the first
+    /// AXButton whose description isn't a known fixed label — because the routing button's
+    /// description is dynamic (it IS the current destination: "Bus 21", "Stereo Output"). But
+    /// `Stereo Out` and `Master` have NO routing button at all, so exclusion matched an unrelated
+    /// mixer-panel button: live, `Stereo Out` reported its output as "bounce" and `Master` as
+    /// "dim" (both AXSwitches). That corrupted `refresh_state`'s `output` field and handed
+    /// `set_output` a random button to press.
+    ///
+    /// Identify it POSITIVELY instead, anchored STRUCTURALLY: the routing slot is the IMMEDIATE
+    /// NEXT SIBLING of the `AXPopUpButton description="group"`, accepted only if it is a plain
+    /// AXButton with no subrole, no value, and a description that isn't a fixed control label.
+    /// If that check fails there is no output slot — return nil and let the caller say so. A
+    /// wrong answer is worse than no answer.
+    ///
+    /// NOT a name-shape match (`Bus \d+`, …): buses are RENAMABLE in Logic, so any such regex
+    /// breaks on a custom bus name. The structural anchor is the robust discriminator.
+    /// See Fixtures/ax/strip_special.txt (normal / SI / aux / Stereo Out / Master).
     private func outputButton(_ strip: AXHandle) -> AXHandle? {
-        let fixed: Set<String> = ["mute", "solo", "send button", "audio plug-in", "MIDI plug-in",
-                                  "insert bar", "EQ", "group", "volume fader level", "peak level meter"]
-        return p.children(of: strip).first {
-            p.string(.role, of: $0) == "AXButton"
-                && !(p.string(.description, of: $0).map(fixed.contains) ?? true)
-        }
+        let kids = p.children(of: strip)
+        guard let groupIdx = kids.firstIndex(where: {
+            p.string(.role, of: $0) == "AXPopUpButton" && p.string(.description, of: $0) == "group"
+        }) else { return nil }                                  // no "group" anchor ⇒ no slot
+        let next = kids.index(after: groupIdx)
+        guard next < kids.endIndex else { return nil }          // "group" was last ⇒ no slot
+        let candidate = kids[next]
+        guard p.string(.role, of: candidate) == "AXButton",     // a plain button…
+              p.string(.subrole, of: candidate) == nil,         // …not an AXSwitch ("bounce"/"dim")
+              p.string(.value, of: candidate) == nil,           // …and it carries no value
+              let desc = p.string(.description, of: candidate), !desc.isEmpty,
+              !Self.fixedStripLabels.contains(desc)             // …nor a fixed label ("audio plug-in")
+        else { return nil }
+        return candidate
     }
 
-    /// Public passthrough to `outputButton(_:)` for `set_output` (Task 7) — the output-routing
-    /// button is found by exclusion (its description is the CURRENT destination, e.g. "Bus 9",
-    /// not a fixed label), and only `AXBridge` can walk a strip's children to locate it.
+    /// Public passthrough to `outputButton(_:)` for `set_output`. nil means the strip has no
+    /// output slot (Stereo Out, Master) — the caller MUST refuse, not fall back to another button.
     public func outputButtonHandle(_ strip: AXHandle) -> AXHandle? { outputButton(strip) }
 
     public func read(_ strip: AXHandle) -> AXStripControls {

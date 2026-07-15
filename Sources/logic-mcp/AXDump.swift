@@ -25,6 +25,32 @@ struct AXDump: AsyncParsableCommand {
             print("Open the plugin window in Logic first, then run `axdump tree` and locate")
             print("the plugin window; this mode just re-dumps all windows for capture:")
             for w in p.windows() { dump(p, w, depth: 0, maxDepth: 6) }
+        case "insertprobe":
+            // Diagnostic: open a strip's first insert popup and dump it, to capture the real
+            // (search-based) plugin picker. Optional 3rd arg = a query typed into the first text
+            // field found in the popup, so we can see how results populate after typing.
+            guard args.count >= 2, let strip = findStrip(p, named: args[1]) else {
+                print("strip '\(args.dropFirst().first ?? "?")' not found"); return
+            }
+            guard let slot = firstControl(p, in: strip, description: "audio plug-in") else {
+                print("no 'audio plug-in' insert slot on '\(args[1])'"); return
+            }
+            try? p.perform(.press, on: slot)   // return code unreliable; the popup opens anyway
+            usleep(1_300_000)
+            print("========== POPUP (before typing) ==========")
+            for w in p.windows() { dump(p, w, depth: 0, maxDepth: 8) }
+            if args.count >= 3 {
+                let query = args[2]
+                if let field = firstSearchField(p, in: p.windows()) {
+                    print("========== typing '\(query)' into \(p.string(.subrole, of: field) ?? "?") ==========")
+                    try? p.setString(query, of: field)
+                    usleep(1_300_000)
+                    print("========== POPUP (after typing) ==========")
+                    for w in p.windows() { dump(p, w, depth: 0, maxDepth: 8) }
+                } else {
+                    print("no text/search field found in popup to type into")
+                }
+            }
         case "menu":
             guard args.count >= 2 else { print("usage: axdump menu <Track|File|Mix|Edit>"); return }
             guard let mb = p.menuBar() else { print("no menu bar"); return }
@@ -48,6 +74,20 @@ struct AXDump: AsyncParsableCommand {
             return nil
         }
         return p.windows().compactMap { rec($0, 0) }.first
+    }
+
+    private func firstControl(_ p: SystemAXProvider, in strip: AXHandle, description: String) -> AXHandle? {
+        p.children(of: strip).first { p.string(.description, of: $0)?.lowercased() == description.lowercased() }
+    }
+
+    private func firstSearchField(_ p: SystemAXProvider, in roots: [AXHandle]) -> AXHandle? {
+        func rec(_ h: AXHandle, _ d: Int) -> AXHandle? {
+            if d > 12 { return nil }
+            if p.string(.subrole, of: h) == "AXSearchField" { return h }
+            for c in p.children(of: h) { if let f = rec(c, d + 1) { return f } }
+            return nil
+        }
+        return roots.compactMap { rec($0, 0) }.first
     }
 
     private func dump(_ p: SystemAXProvider, _ h: AXHandle, depth: Int, maxDepth: Int) {

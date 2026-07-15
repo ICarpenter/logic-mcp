@@ -58,7 +58,7 @@ public struct SetVolumeTool: LogicTool {
             }
             delta = value
         }
-        let strip = try await daemon.ax.find(trackName)
+        let strip = try await daemon.mixerStrip(named: trackName)
         guard let vol = await daemon.ax.control(strip, description: "volume fader") else {
             throw ToolFailure(error: "no volume fader", layer: "ax",
                               expected: "a volume slider on '\(trackName)'", observed: "none")
@@ -165,7 +165,7 @@ func setToggle(_ daemon: Daemon, trackName: String, on: Bool,
 /// Idempotent by construction. No focus, no MCU.
 func setToggleAX(_ daemon: Daemon, trackName: String, on: Bool, isMute: Bool) async throws -> Value {
     let label = isMute ? "mute" : "solo"
-    let strip = try await daemon.ax.find(trackName)
+    let strip = try await daemon.mixerStrip(named: trackName)
     let priorControls = await daemon.ax.read(strip)
     let prior = isMute ? priorControls.mute : priorControls.solo
     guard let button = await daemon.ax.control(strip, description: label) else {
@@ -239,7 +239,7 @@ public struct SetPanTool: LogicTool {
         guard let position = args["position"]?.coercedInt, (-64...63).contains(position) else {
             throw ToolFailure(error: "'position' must be an integer in -64…63", layer: "daemon")
         }
-        let strip = try await daemon.ax.find(trackName)
+        let strip = try await daemon.mixerStrip(named: trackName)
         guard let pan = await daemon.ax.control(strip, description: "pan") else {
             throw ToolFailure(error: "no pan control", layer: "ax",
                               expected: "a pan slider on '\(trackName)'", observed: "none")

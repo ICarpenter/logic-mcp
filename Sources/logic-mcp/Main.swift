@@ -21,7 +21,12 @@ struct Serve: AsyncParsableCommand {
         // SystemAXProvider's init never throws for missing Logic/permission — it stores a
         // nil app and AX tools fail gracefully (ToolFailure(layer: "ax")) at call time.
         let axProvider = try SystemAXProvider()
-        let daemon = await Daemon(wire: wire, axProvider: axProvider)
+        // Capture the running executable's build time NOW, before we start serving — this is
+        // the only moment at which the file on disk is guaranteed to still be the code we are
+        // running. `BuildStamp.live()` never throws: if the path cannot be resolved it degrades
+        // to "unknown" and `ping`'s staleness check simply stays quiet, rather than taking the
+        // server down over a broken health check.
+        let daemon = await Daemon(wire: wire, axProvider: axProvider, buildStamp: .live())
         let registry = ToolRegistry()
         await daemon.registerAllTools(in: registry)
 

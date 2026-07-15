@@ -46,7 +46,7 @@ public struct RenameTrackTool: LogicTool {
         _ = try requireString(args, "to", tool: name)
         // Resolve via AX first so a bad/ambiguous track name still gives the precise
         // AXBridge.find() error, not a blanket "not available" that would mask it.
-        let strip = try await daemon.ax.find(trackName)
+        let strip = try await daemon.mixerStrip(named: trackName)
         let resolved = await daemon.ax.read(strip).name
         throw ToolFailure(
             error: "renaming a track is not available via AX in this release",
@@ -67,7 +67,7 @@ public struct SelectTrackTool: LogicTool {
     let daemon: Daemon
     public func invoke(_ args: [String: Value]) async throws -> Value {
         let name = try requireString(args, "name", tool: name)
-        let strip = try await daemon.ax.find(name)
+        let strip = try await daemon.mixerStrip(named: name)
         // Selecting = pressing the strip's name field / header. Confirm via the resolved name.
         try await daemon.menu.pressElement(strip)
         let resolved = await daemon.ax.read(strip).name
@@ -88,7 +88,7 @@ public struct DeleteTrackTool: LogicTool {
         let name = try requireString(args, "name", tool: name)
         // Resolve via AX FIRST so a bad/unknown track name still gives the precise
         // AXBridge.find() error, not this blanket "not available" that would mask it.
-        let strip = try await daemon.ax.find(name)             // throws layer:"ax" if unknown
+        let strip = try await daemon.mixerStrip(named: name)             // throws layer:"ax" if unknown
         let resolved = await daemon.ax.read(strip).name
         // MUST NOT press anything from here — no pressElement(strip), no
         // pressMenuPath(["Track", "Delete Track"]). See selection.txt: AX cannot select a track,
@@ -109,11 +109,16 @@ public struct SetOutputTool: LogicTool {
     public func invoke(_ args: [String: Value]) async throws -> Value {
         let track = try requireString(args, "track", tool: name)
         let dest = try requireString(args, "dest", tool: name)
-        let strip = try await daemon.ax.find(track)
-        // The output button has a dynamic description (current dest); AXBridge finds it by exclusion.
+        let strip = try await daemon.mixerStrip(named: track)
+        // The routing slot is found STRUCTURALLY (the plain AXButton immediately after the "group"
+        // popup — see AXBridge.outputButton). nil means the strip genuinely HAS no output slot:
+        // Stereo Out and Master don't have one (Fixtures/ax/strip_special.txt). Refuse. The old
+        // by-exclusion search handed us an unrelated mixer-panel button here ("bounce", "dim") and
+        // we would have PRESSED it.
         guard let outBtn = await daemon.ax.outputButtonHandle(strip) else {
-            throw ToolFailure(error: "no output slot on '\(track)'", layer: "ax",
-                              expected: "the output-routing button", observed: "none")
+            throw ToolFailure(error: "strip '\(track)' has no output slot", layer: "ax",
+                              expected: "an output-routing button on the strip",
+                              observed: "this strip has no routing slot in Logic's mixer (Stereo Out / Master don't have one) — nothing was pressed")
         }
         try await daemon.menu.selectPopupLeaf(from: outBtn, title: dest)   // nested popup — see fixture
         // Same async-AX-update hazard as create_track/delete_track's settleTracks: the output
@@ -130,22 +135,29 @@ public struct SetOutputTool: LogicTool {
 
 public struct UndoStructuralTool: LogicTool {
     public let name = "undo_structural"
-    public let description = "Undo the last structural edit via Logic's Edit ▸ Undo (e.g. reverse a delete_track/create_track)."
+    public let description = "Undo the last structural edit via Logic's Edit ▸ Undo (e.g. reverse a create_track or an insert_plugin). Returns the FULL title Logic gave the undo item (e.g. 'Undo Create Track') — that is what was actually reverted."
     public let inputSchema: Value = .object(["type": .string("object"), "properties": .object([:])])
     let daemon: Daemon
     public func invoke(_ args: [String: Value]) async throws -> Value {
         let before = try await currentTrackNames(daemon)
-        try await daemon.menu.pressMenuPath(["Edit", "Undo"])
-        // Same async-AX-update hazard as create_track/delete_track — settle-poll until the
-        // mixer's track list actually reflects the undo instead of trusting an immediate re-read.
+        // BUG 3: Logic RETITLES the item per operation ("Undo Create Track", "Undo Delete
+        // Tracks"), so an equality match on "Undo" works exactly once and then fails forever.
+        // Match by PREFIX and report the full title back — it names what Logic reverted, and it
+        // is the only independent oracle we get (the press's return code means nothing).
+        let title = try await daemon.menu.pressMenuItemWithPrefix(menu: "Edit", prefix: "Undo")
+        // Same async-AX-update hazard as create_track — settle-poll until the mixer's track list
+        // reflects the undo instead of trusting an immediate re-read. NOTE: an undo that changes
+        // something OTHER than the track list (e.g. undoing an insert_plugin or a set_output)
+        // leaves the list equal, so this poll just runs out its deadline; the reported title, not
+        // this poll, is the tool's evidence.
         _ = try await settleTracks(daemon) { names in names != before }
-        return .object(["undone": .bool(true)])
+        return .object(["undone": .string(title)])
     }
 }
 
 // Shared helpers used across structure tools.
 func currentTrackNames(_ daemon: Daemon) async throws -> [String] {
-    try await daemon.axMixer.syncTracks()
+    try await daemon.syncMixer()
 }
 
 /// Poll the mixer (re-reading via AX) until `condition` holds on the track-name list, or the

@@ -57,7 +57,7 @@ final class ToolTests: XCTestCase {
             ])
         }
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: strips)
-        let window = FakeAXNode(role: "AXWindow", children: [area])
+        let window = FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])
         let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
         p.nudgeMode = true
         p.onSetNumber = { node, resulting in

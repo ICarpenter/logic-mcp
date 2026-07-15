@@ -9,7 +9,7 @@ final class StructureToolTests: XCTestCase {
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [
             FakeAXNode(role: "AXLayoutItem", description: "vox"),
         ])
-        let window = FakeAXNode(role: "AXWindow", children: [area])
+        let window = FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])
         let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
         let newAudio = FakeAXNode(role: "AXMenuItem", title: "New Audio Track")
         newAudio.onPress = {
@@ -48,7 +48,7 @@ final class StructureToolTests: XCTestCase {
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [
             FakeAXNode(role: "AXLayoutItem", description: "vox"),
         ])
-        let window = FakeAXNode(role: "AXWindow", children: [area])
+        let window = FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])
         let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
         let newAudio = FakeAXNode(role: "AXMenuItem", title: "New Audio Track")
         newAudio.onPress = {
@@ -72,7 +72,7 @@ final class StructureToolTests: XCTestCase {
         var pressed = false
         vox.onPress = { pressed = true }
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [vox])
-        let window = FakeAXNode(role: "AXWindow", children: [area])
+        let window = FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])
         let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
         let d = await daemon(p)
         let r = try await SelectTrackTool(daemon: d).invoke(["name": .string("vo")])
@@ -128,7 +128,7 @@ final class StructureToolTests: XCTestCase {
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [
             FakeAXNode(role: "AXLayoutItem", description: "vox"), scratch,
         ])
-        let window = FakeAXNode(role: "AXWindow", children: [area])
+        let window = FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])
         let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
         var selected: FakeAXNode?
         scratch.onPress = { selected = scratch }
@@ -147,7 +147,7 @@ final class StructureToolTests: XCTestCase {
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [
             FakeAXNode(role: "AXLayoutItem", description: "vox"), scratch,
         ])
-        let window = FakeAXNode(role: "AXWindow", children: [area])
+        let window = FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])
         let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
         var selected: FakeAXNode?
         scratch.onPress = { selected = scratch }
@@ -258,9 +258,13 @@ final class StructureToolTests: XCTestCase {
         let topMenu = FakeAXNode(role: "AXMenu", children: [noOutput, outputItem, busItem])
         outputButton.children = [topMenu]
 
-        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [outputButton])
+        // The routing slot is identified STRUCTURALLY — the plain AXButton immediately after the
+        // strip's "group" popup (Fixtures/ax/strip_special.txt) — so the fake carries that anchor.
+        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
+            FakeAXNode(role: "AXPopUpButton", description: "group", title: "group"), outputButton,
+        ])
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
-        let window = FakeAXNode(role: "AXWindow", children: [area])
+        let window = FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])
         let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
         return (p, outputButton)
     }
@@ -282,13 +286,13 @@ final class StructureToolTests: XCTestCase {
     /// button's description to become "Bus 3" via `scheduleDescriptionChange(to:afterReads:)` instead
     /// of mutating it in place, so it stays "Bus 9" for several `.description` reads after the press.
     /// Each `AXBridge.read(strip)` call reads the button's `.description` SIX times (the four
-    /// `control(strip, description:)` probes for volume/mute/solo/pan each scan the strip's only
-    /// child — this button — plus `outputButton`'s by-exclusion scan and `AXBridge.read`'s final
-    /// fetch), so `afterReads: 8` guarantees the change is still hidden through the whole first
-    /// `read(strip)` call and only lands on the second (i.e. after a real 50ms sleep + retry).
-    /// Against a `settleOutput` reduced to a single immediate read this test FAILS with "output
-    /// change not confirmed", observed "Bus 9" (verified by stashing the fix — see task report for
-    /// the RED transcript); the real settle-poll waits it out and succeeds.
+    /// `control(strip, description:)` probes for volume/mute/solo/pan each scan the strip's
+    /// children until they miss — reaching this button every time — plus `outputButton`'s
+    /// structural match and `AXBridge.read`'s final fetch), so `afterReads: 8` guarantees the
+    /// change is still hidden through the whole first `read(strip)` call and only lands on the
+    /// second (i.e. after a real 50ms sleep + retry). Against a `settleOutput` reduced to a single
+    /// immediate read this test FAILS with "output change not confirmed", observed "Bus 9"
+    /// (verified by stashing the fix); the real settle-poll waits it out and succeeds.
     func testSetOutputSettlesThroughAsyncLag() async throws {
         let outputButton = FakeAXNode(role: "AXButton", description: "Bus 9")
         let bus1 = FakeAXNode(role: "AXMenuItem", title: "Bus 1")
@@ -300,9 +304,11 @@ final class StructureToolTests: XCTestCase {
         let topMenu = FakeAXNode(role: "AXMenu", children: [noOutput, busItem])
         outputButton.children = [topMenu]
 
-        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [outputButton])
+        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
+            FakeAXNode(role: "AXPopUpButton", description: "group", title: "group"), outputButton,
+        ])
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
-        let window = FakeAXNode(role: "AXWindow", children: [area])
+        let window = FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])
         let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
         let d = await daemon(p)
         let r = try await SetOutputTool(daemon: d).invoke(["track": .string("vox"), "dest": .string("Bus 3")])
@@ -329,5 +335,78 @@ final class StructureToolTests: XCTestCase {
             XCTAssertEqual(f.layer, "ax")
             XCTAssertTrue(f.observed?.contains("Bus 3") ?? false, "should list available destinations: \(f.observed ?? "nil")")
         }
+    }
+
+    /// BUG 1's consequence for the WRITE path: `Stereo Out` has no routing slot at all
+    /// (Fixtures/ax/strip_special.txt). The old by-exclusion search handed set_output the
+    /// "bounce" AXSwitch — so this tool would have PRESSED BOUNCE. It must refuse cleanly and
+    /// press nothing.
+    func testSetOutputOnAStripWithNoOutputSlotRefusesAndPressesNothing() async throws {
+        let p = AXFixture.provider("strip_special")
+        let bounce = AXFixture.find([p.rootNode], description: "bounce")!
+        var bouncePressed = false
+        bounce.onPress = { bouncePressed = true }
+        let d = await daemon(p)
+        do {
+            _ = try await SetOutputTool(daemon: d).invoke(["track": .string("Stereo Out"),
+                                                           "dest": .string("Bus 3")])
+            XCTFail("expected a 'no output slot' ToolFailure")
+        } catch let f as ToolFailure {
+            XCTAssertEqual(f.layer, "ax")
+            XCTAssertTrue(f.error.contains("no output slot"), f.error)
+        }
+        XCTAssertFalse(bouncePressed, "set_output must never press an unrelated mixer-panel button")
+        XCTAssertEqual(bounce.stringValue, "off", "bounce must still be off")
+    }
+
+    // MARK: - BUG 3: Logic RETITLES the Undo menu item per operation
+    //
+    // "Undo Create Track", "Undo Delete Tracks", "Redo Create Track" — matching the literal title
+    // "Undo" by equality worked exactly once and then failed forever with "menu item 'Undo' not
+    // found". Match by PREFIX (opt-in, undo/redo only — `pressMenuPath` stays exact so
+    // "New Audio Track" can never hit "New Audio Track With Duplicate Settings"), and return the
+    // FULL matched title so the caller learns what Logic actually reverted.
+
+    /// Edit ▸ "Undo Create Track" — a fake modeled on the real retitled item.
+    func providerWithRetitledUndo(_ undoTitle: String,
+                                  extraEditItemsBefore: [String] = []) -> FakeAXProvider {
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [
+            FakeAXNode(role: "AXLayoutItem", description: "vox"),
+            FakeAXNode(role: "AXLayoutItem", description: "Audio 1"),
+        ])
+        let window = FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
+        var items: [(title: String, onPress: (() -> Void)?)] = extraEditItemsBefore.map { title in
+            (title: title, onPress: { XCTFail("pressed the wrong Edit item: '\(title)'") })
+        }
+        items.append((title: undoTitle, onPress: {
+            area.children.removeAll { $0.description == "Audio 1" }   // Logic reverses the create
+        }))
+        p.makeMenuBar([(bar: "Edit", items: items)])
+        return p
+    }
+
+    func testUndoStructuralMatchesTheRetitledUndoItemAndReportsIt() async throws {
+        let d = await daemon(providerWithRetitledUndo("Undo Create Track"))
+        _ = try await d.axMixer.syncTracks()
+        let r = try await UndoStructuralTool(daemon: d).invoke([:])
+        guard case .object(let o) = r else { return XCTFail() }
+        XCTAssertEqual(o["undone"], .string("Undo Create Track"),
+                       "must report the FULL title Logic showed — our independent oracle of what was reverted")
+        let names = try await currentTrackNames(d)
+        XCTAssertFalse(names.contains("Audio 1"), "Edit ▸ Undo Create Track should have removed the strip")
+    }
+
+    /// The prefix match must not be sloppy: Logic's Edit menu also carries "Undo History…" (a
+    /// DIALOG item, ellipsis). Pressing that would open a window instead of undoing anything.
+    /// Placed FIRST so a naive `hasPrefix("Undo")` + `first(where:)` picks it — the fake's XCTFail
+    /// fires if it does.
+    func testUndoStructuralSkipsTheUndoHistoryDialogItem() async throws {
+        let d = await daemon(providerWithRetitledUndo("Undo Delete Tracks",
+                                                      extraEditItemsBefore: ["Undo History…"]))
+        _ = try await d.axMixer.syncTracks()
+        let r = try await UndoStructuralTool(daemon: d).invoke([:])
+        guard case .object(let o) = r else { return XCTFail() }
+        XCTAssertEqual(o["undone"], .string("Undo Delete Tracks"))
     }
 }

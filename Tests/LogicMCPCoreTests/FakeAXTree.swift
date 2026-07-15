@@ -52,6 +52,22 @@ final class FakeAXNode {
     /// Test-only hook fired on `.press` (after any AXSwitch flip / window open-close behavior)
     /// so a pressed menu item can mutate the fake tree — e.g. "New Audio Track adds a strip".
     var onPress: (() -> Void)?
+    /// Test-only hook fired on `.cancel` (AXCancel) so a test can model a popup being DISMISSED —
+    /// e.g. the plugin-insert popup removing itself from the mixer area when the driver bails on a
+    /// miss. Nil (the default) makes `.cancel` a no-op, unchanged from prior behavior.
+    var onCancel: (() -> Void)?
+    /// Test-only search-FILTER hook. When set on a node, the provider's `children(of:)` returns
+    /// THIS closure's result instead of the static `children`/latency list — so a popup AXMenu can
+    /// return a DIFFERENT set of menu items depending on the search field's current value. This is
+    /// what models Logic's live insert-search filter: `setString(query, of: searchField)` changes
+    /// which AXMenuItems the popup subsequently yields. Nil (the default) preserves the static
+    /// children read for every other node/test.
+    var dynamicChildren: (() -> [FakeAXNode])?
+    /// Test-only record of every `setString` value written to THIS node, in call order. Lets a
+    /// test assert (independent oracle) that the driver actually TYPED into the search field —
+    /// `["Compressor"]` proves the query was set, not merely that some static value matched.
+    private(set) var setStringLog: [String] = []
+    func recordSetString(_ s: String) { setStringLog.append(s); stringValue = s }
     /// Models Logic's ASYNCHRONOUS AX-tree structural update after a menu press (e.g. a new
     /// mixer strip appearing): a child scheduled via `scheduleChildAppend(_:afterReads:)` is
     /// held back from `children` until this many subsequent `children(of:)` reads on THIS node
@@ -214,11 +230,21 @@ final class FakeAXProvider: AXProvider, @unchecked Sendable {
     private func node(_ h: AXHandle) -> FakeAXNode? { byHandle[h] }
 
     func root() throws -> AXHandle { AXHandle(fake: rootNode) }
+    /// Goes through `readChildrenForLatency()` (like `children(of:)`) so a test can model Logic
+    /// opening a WINDOW asynchronously after a menu press — `Window ▸ Open Mixer` schedules the
+    /// Mixer window via `scheduleChildAppend(_:afterReads:)` and it stays invisible to `windows()`
+    /// for that many reads. With nothing pending this is exactly the old
+    /// `rootNode.children.filter` — unchanged behavior for every other test.
     func windows() -> [AXHandle] {
-        rootNode.children.filter { $0.role == "AXWindow" }.map { AXHandle(fake: $0) }
+        let kids = rootNode.readChildrenForLatency()
+        for k in kids where byHandle[AXHandle(fake: k)] == nil { index(k) }
+        return kids.filter { $0.role == "AXWindow" }.map { AXHandle(fake: $0) }
     }
     func children(of h: AXHandle) -> [AXHandle] {
-        let kids = node(h)?.readChildrenForLatency() ?? []
+        // A node with a `dynamicChildren` filter (a search-popup AXMenu) computes its children
+        // fresh each read from the current search-field value — models Logic's live insert filter.
+        // Every other node keeps the static/latency read path unchanged.
+        let kids = node(h)?.dynamicChildren?() ?? node(h)?.readChildrenForLatency() ?? []
         // Self-healing index: a node appended to the tree after construction (e.g. by an
         // `onPress` hook mutating `.children` directly, as structural-ops tests do to model
         // "New Audio Track adds a strip") isn't in `byHandle` yet — index it (and its
@@ -247,7 +273,7 @@ final class FakeAXProvider: AXProvider, @unchecked Sendable {
     func menuBar() -> AXHandle? { menuBarNode.map { AXHandle(fake: $0) } }
     func setString(_ s: String, of h: AXHandle) throws {
         guard let n = node(h) else { throw AXUnavailable() }
-        n.stringValue = s
+        n.recordSetString(s)   // sets stringValue AND records the call for the type-then-select oracle
     }
     func setNumber(_ v: Double, of h: AXHandle) throws {
         guard let n = node(h), n.settable else { throw AXUnavailable() }
@@ -278,8 +304,10 @@ final class FakeAXProvider: AXProvider, @unchecked Sendable {
             if let closes = n.closesWindow {
                 rootNode.children.removeAll { $0 === closes }
             }
-        case .showMenu, .cancel:
-            break   // no-op in the fake; callers use these for popups/dialogs (Task 3+)
+        case .showMenu:
+            break   // no-op in the fake; callers use it to request a popup (Task 3+)
+        case .cancel:
+            n.onCancel?()   // lets a test model a popup DISMISSING itself on the driver's bail-out
         }
         if action == .press { n.onPress?() }
     }

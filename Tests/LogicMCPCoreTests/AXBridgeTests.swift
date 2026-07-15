@@ -12,6 +12,10 @@ final class AXBridgeTests: XCTestCase {
                 FakeAXNode(role: "AXSlider", description: "volume fader", value: 173, settable: true),
                 FakeAXNode(role: "AXStaticText", description: "volume fader level", title: dbTitle),
                 FakeAXNode(role: "AXSlider", description: "pan", value: pan, settable: true),
+                // The routing slot is the plain AXButton IMMEDIATELY AFTER the "group" popup —
+                // that structural anchor is how it's identified (Fixtures/ax/mixer_strip.txt,
+                // strip_special.txt), so the fake must carry the anchor like real Logic does.
+                FakeAXNode(role: "AXPopUpButton", description: "group", title: "group"),
                 FakeAXNode(role: "AXButton", description: "Bus 9"),
             ])
         }
@@ -90,5 +94,91 @@ final class AXBridgeTests: XCTestCase {
         let names = try await bridge.stripHandles().map(\.name)
         XCTAssertEqual(names.count, 20)
         XCTAssertFalse(names.contains("Aux 1"), "must not bind the Inspector mini-mixer")
+    }
+
+    // MARK: - BUG 1: the output slot is identified POSITIVELY (Fixtures/ax/strip_special.txt)
+    //
+    // The old `outputButton()` found the routing slot by EXCLUSION — the first AXButton whose
+    // description isn't a known fixed label. On strips that have NO routing slot at all it
+    // therefore matched an unrelated mixer-panel button: live, `Stereo Out` reported its output as
+    // "bounce" and `Master` as "dim" (both AXSwitches). The slot must instead be found
+    // structurally: the IMMEDIATE NEXT SIBLING of the `AXPopUpButton description="group"`, accepted
+    // only if it's a plain AXButton (no subrole, no value) whose description isn't a fixed label.
+    // No slot ⇒ nil. A wrong answer is worse than no answer. (NOT a `Bus \d+` regex — buses are
+    // renamable.) These tests parse the REAL captured tree.
+
+    func testOutputSlotReadFromRealCapture() async throws {
+        let bridge = AXBridge(provider: AXFixture.provider("strip_special"))
+        let liverpool = await bridge.read(try await bridge.find("Liverpool"))
+        XCTAssertEqual(liverpool.output, "Bus 21", "normal audio track routes to a renamed/regular bus")
+        let inst = await bridge.read(try await bridge.find("Inst 2"))
+        XCTAssertEqual(inst.output, "Bus 9", "software instrument")
+        let aux = await bridge.read(try await bridge.find("Aux 1"))
+        XCTAssertEqual(aux.output, "Stereo Output", "aux")
+    }
+
+    func testStereoOutHasNoOutputSlot() async throws {
+        let bridge = AXBridge(provider: AXFixture.provider("strip_special"))
+        let strip = try await bridge.find("Stereo Out")
+        let button = await bridge.outputButtonHandle(strip)
+        let output = await bridge.read(strip).output
+        XCTAssertNil(button, "Stereo Out has NO routing button — the next sibling after 'group' is a plugin slot")
+        XCTAssertNil(output, "refresh_state must report no output, not the 'bounce' switch")
+    }
+
+    func testMasterHasNoOutputSlot() async throws {
+        let bridge = AXBridge(provider: AXFixture.provider("strip_special"))
+        let strip = try await bridge.find("Master")
+        let button = await bridge.outputButtonHandle(strip)
+        let output = await bridge.read(strip).output
+        XCTAssertNil(button, "Master has NO routing button — the next sibling after 'group' is the 'dim' AXSwitch")
+        XCTAssertNil(output, "refresh_state must report no output, not the 'dim' switch")
+    }
+
+    /// A bus can be RENAMED in Logic, so the routing slot's description is arbitrary text — the
+    /// structural anchor (next sibling after "group") must still find it, and a name-shape regex
+    /// (`Bus \d+`) must never be what identifies it.
+    func testRenamedBusIsStillFoundAsTheOutputSlot() async throws {
+        let p = AXFixture.provider("strip_special")
+        AXFixture.find([p.rootNode], description: "Bus 21")?.description = "Drum Buss"
+        let bridge = AXBridge(provider: p)
+        let liverpool = await bridge.read(try await bridge.find("Liverpool"))
+        XCTAssertEqual(liverpool.output, "Drum Buss")
+    }
+
+    // MARK: - BUG 2 (a): strict mixer-window binding
+    //
+    // BOTH the Mixer window and the arrange window contain an `AXLayoutArea description="Mixer"`
+    // — the arrange one is the Inspector's MINI-MIXER (selected track + its output). With the
+    // Mixer window CLOSED it is the only one left, and binding it silently REPLACES the shadow
+    // model with 2 strips while reporting success. Bind only inside a window titled "…Mixer…".
+
+    func testStripHandlesBindsTheMixerWindowNotTheInspector() async throws {
+        let bridge = AXBridge(provider: AXFixture.provider("strip_special"))
+        let names = try await bridge.stripHandles().map(\.name)
+        XCTAssertEqual(names, ["Liverpool", "Inst 2", "Aux 1", "Stereo Out", "Master"])
+    }
+
+    func testMixerWindowClosedThrowsInsteadOfBindingMiniMixer() async throws {
+        let p = AXFixture.provider("strip_special")
+        p.rootNode.children.removeAll { $0.title == "Untitled 1 - Mixer: Tracks" }   // user closed the Mixer
+        let bridge = AXBridge(provider: p)
+        do {
+            let names = try await bridge.stripHandles().map(\.name)
+            XCTFail("expected 'no mixer surface'; instead bound the Inspector mini-mixer: \(names)")
+        } catch let f as ToolFailure {
+            XCTAssertEqual(f.layer, "ax")
+            XCTAssertTrue(f.error.contains("no mixer surface"), f.error)
+        }
+    }
+
+    func testHasMixerWindowReflectsWhetherTheMixerWindowIsOpen() async throws {
+        let p = AXFixture.provider("strip_special")
+        let bridge = AXBridge(provider: p)
+        let whileOpen = await bridge.hasMixerWindow()
+        XCTAssertTrue(whileOpen)
+        p.rootNode.children.removeAll { $0.title == "Untitled 1 - Mixer: Tracks" }
+        let whileClosed = await bridge.hasMixerWindow()
+        XCTAssertFalse(whileClosed, "the Inspector's mini-mixer must NOT count as a Mixer window")
     }
 }
