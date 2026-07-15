@@ -51,6 +51,28 @@ struct AXDump: AsyncParsableCommand {
                     print("no text/search field found in popup to type into")
                 }
             }
+        case "outputprobe":
+            // Diagnostic: press a strip's output-routing button and dump ALL windows, to capture
+            // WHERE the routing popup attaches (under the button? a sibling of the strips? a separate
+            // window?) and its nested structure — the ground truth set_output/selectPopupLeaf needs.
+            guard args.count >= 2, let strip = findStrip(p, named: args[1]) else {
+                print("strip '\(args.dropFirst().first ?? "?")' not found"); return
+            }
+            guard let btn = outputButton(p, in: strip) else {
+                print("no output-routing button on '\(args[1])' (no plain AXButton after the 'group' popup)"); return
+            }
+            print("output button: desc=\(p.string(.description, of: btn).debugDescription)")
+            try? p.perform(.press, on: btn)   // return code unreliable; the popup opens anyway
+            usleep(1_300_000)
+            print("========== ALL WINDOWS after pressing output button ==========")
+            for w in p.windows() { dump(p, w, depth: 0, maxDepth: 9) }
+            if args.count >= 3, let field = firstSearchField(p, in: p.windows()) {
+                print("========== typing '\(args[2])' into the routing search field ==========")
+                try? p.setString(args[2], of: field)
+                usleep(1_300_000)
+                for w in p.windows() { dump(p, w, depth: 0, maxDepth: 9) }
+            }
+            try? p.perform(.cancel, on: btn)   // dismiss so we don't leave a modal popup hanging
         case "menu":
             guard args.count >= 2 else { print("usage: axdump menu <Track|File|Mix|Edit>"); return }
             guard let mb = p.menuBar() else { print("no menu bar"); return }
@@ -78,6 +100,18 @@ struct AXDump: AsyncParsableCommand {
 
     private func firstControl(_ p: SystemAXProvider, in strip: AXHandle, description: String) -> AXHandle? {
         p.children(of: strip).first { p.string(.description, of: $0)?.lowercased() == description.lowercased() }
+    }
+
+    /// The strip's output-routing button: the plain AXButton immediately after the "group" popup
+    /// (same structural anchor AXBridge.outputButton uses).
+    private func outputButton(_ p: SystemAXProvider, in strip: AXHandle) -> AXHandle? {
+        let kids = p.children(of: strip)
+        guard let gi = kids.firstIndex(where: {
+            p.string(.role, of: $0) == "AXPopUpButton" && p.string(.description, of: $0) == "group"
+        }) else { return nil }
+        let ni = kids.index(after: gi)
+        guard ni < kids.endIndex, p.string(.role, of: kids[ni]) == "AXButton" else { return nil }
+        return kids[ni]
     }
 
     private func firstSearchField(_ p: SystemAXProvider, in roots: [AXHandle]) -> AXHandle? {

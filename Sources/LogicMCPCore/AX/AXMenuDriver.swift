@@ -141,47 +141,43 @@ public actor AXMenuDriver {
     /// select_track was removed and delete_track is disabled; see Fixtures/ax/selection.txt).
     public func pressElement(_ h: AXHandle) throws { try p.perform(.press, on: h) }
 
-    /// Open a popup on `control` (AXShowMenu, else AXPress), descend the item title `path`, press
-    /// the leaf. On any miss, dismiss the popup (AXCancel) so nothing is left hanging.
-    public func selectPopupItem(from control: AXHandle, path: [String]) async throws {
-        do { try p.perform(.showMenu, on: control) } catch { try? p.perform(.press, on: control) }
-        try? await Task.sleep(for: .milliseconds(40))
-        var current = control
-        for (i, title) in path.enumerated() {
-            let items = menuItems(under: current)
-            guard let match = items.first(where: {
-                (p.string(.title, of: $0) ?? "").caseInsensitiveCompare(title) == .orderedSame
-            }) else {
-                try? p.perform(.cancel, on: control)
-                throw ToolFailure(error: "popup item '\(title)' not found", layer: "ax",
-                                  expected: path.joined(separator: " ▸ "),
-                                  observed: "available: \(items.compactMap { p.string(.title, of: $0) }.joined(separator: ", "))")
-            }
-            if i == path.count - 1 { try p.perform(.press, on: match) }
-            else { try? p.perform(.press, on: match); try? await Task.sleep(for: .milliseconds(30)); current = match }
+    /// Set a routing destination via the output button's SEARCH-driven popup — the SAME mechanism as
+    /// `selectPluginFromPopup`. Real Logic (2026-07-15, outputprobe): the routing popup attaches as a
+    /// SIBLING of the mixer strips (NOT under the button — `menuItems(under: control)` finds nothing),
+    /// and its first item is an `AXTextField subrole="AXSearchField"`. `setString(dest)` triggers
+    /// Logic's filter with NO keystrokes/CGEvents, FLATTENING the nested "Bus ▸"/"Output ▸" submenus
+    /// into a top-level match list; press the EXACT case-insensitive title match — NOT the first
+    /// result ("Bus 3" also surfaces "Bus 30"/"Bus 13"/… — see Fixtures/ax/popup_output.txt). The
+    /// TOOL settle-polls the strip's output slot afterwards as the independent oracle. Dismisses the
+    /// popup (AXCancel on the control) on ANY throw path so no modal menu lingers.
+    public func selectRoutingDestination(from control: AXHandle, dest: String) async throws {
+        try? p.perform(.press, on: control)     // opens the popup (return code unreliable — read the tree)
+        guard let popup = await settleForSearchPopup() else {
+            throw ToolFailure(error: "routing popup did not open", layer: "ax",
+                              expected: "a routing popup carrying a search field (AXSearchField)",
+                              observed: "pressed the output button but no AXMenu with a search field appeared within 2s")
         }
-    }
-
-    /// Open `control`'s popup and press the LEAF whose title matches `title` — searching the popup's
-    /// menu tree at top level OR one submenu deep (Logic's routing popup nests destinations under
-    /// "Output ▸" / "Bus ▸"; see Fixtures/ax/popup_output.txt). Dismisses the popup on a miss so
-    /// nothing is left hanging. The control supports AXPress only (no AXShowMenu).
-    public func selectPopupLeaf(from control: AXHandle, title: String) async throws {
-        try p.perform(.press, on: control)          // opens the popup (AXShowMenu is unsupported)
-        try? await Task.sleep(for: .milliseconds(60))
-        // Collect candidate leaves: top-level items + items one submenu deep.
-        var leaves: [AXHandle] = []
-        for item in menuItems(under: control) {
-            leaves.append(item)
-            leaves.append(contentsOf: menuItems(under: item))   // one level of submenu
-        }
-        guard let hit = leaves.first(where: {
-            (p.string(.title, of: $0) ?? "").caseInsensitiveCompare(title) == .orderedSame
-        }) else {
+        do { try p.setString(dest, of: popup.search) }
+        catch {
             try? p.perform(.cancel, on: control)
-            throw ToolFailure(error: "no routing destination '\(title)'", layer: "ax",
-                              expected: "a bus/output leaf in the popup",
-                              observed: "available: \(leaves.compactMap { p.string(.title, of: $0) }.filter { !$0.isEmpty }.joined(separator: ", "))")
+            throw ToolFailure(error: "could not type into the routing search field", layer: "ax",
+                              expected: "a settable AXSearchField", observed: "\(error)")
+        }
+        var seen: [String] = []
+        var match: AXHandle?
+        let deadline = ContinuousClock.now + .seconds(2)
+        repeat {
+            let items = searchPopupItems(in: popup.menu)
+            seen = items.compactMap { p.string(.title, of: $0) }
+            match = items.first { (p.string(.title, of: $0) ?? "").caseInsensitiveCompare(dest) == .orderedSame }
+            if match != nil { break }
+            try? await Task.sleep(for: .milliseconds(50))
+        } while ContinuousClock.now < deadline
+        guard let hit = match else {
+            try? p.perform(.cancel, on: control)
+            throw ToolFailure(error: "no routing destination '\(dest)'", layer: "ax",
+                              expected: "an exact match for '\(dest)' after filtering the routing search",
+                              observed: "filtered results: \(seen.prefix(30).joined(separator: ", "))")
         }
         try p.perform(.press, on: hit)
     }
@@ -210,7 +206,7 @@ public actor AXMenuDriver {
         try? p.perform(.press, on: slot)       // opens the popup (return code is unreliable; read the tree)
 
         // 2. Locate the popup + its search field by walking the window tree (NOT under the slot).
-        guard let popup = await settleForPluginPopup() else {
+        guard let popup = await settleForSearchPopup() else {
             throw ToolFailure(error: "plugin-insert popup did not open", layer: "ax",
                               expected: "an insert popup carrying a search field (AXSearchField)",
                               observed: "pressed the insert slot but no AXMenu with a search field appeared within 2s")
@@ -229,7 +225,7 @@ public actor AXMenuDriver {
         var match: AXHandle?
         let deadline = ContinuousClock.now + .seconds(2)
         repeat {
-            let items = pluginItems(in: popup.menu)
+            let items = searchPopupItems(in: popup.menu)
             seen = items.compactMap { p.string(.title, of: $0) }
             match = items.first { (p.string(.title, of: $0) ?? "").caseInsensitiveCompare(plugin) == .orderedSame }
             if match != nil { break }
@@ -257,19 +253,19 @@ public actor AXMenuDriver {
 
     /// Settle-poll (~2s) for the plugin-insert popup anywhere in the window tree — the AX tree
     /// updates ASYNCHRONOUSLY after the slot press, so an immediate read routinely misses it.
-    private func settleForPluginPopup() async -> (menu: AXHandle, search: AXHandle)? {
-        if let hit = findPluginPopup() { return hit }
+    private func settleForSearchPopup() async -> (menu: AXHandle, search: AXHandle)? {
+        if let hit = findSearchPopup() { return hit }
         let deadline = ContinuousClock.now + .seconds(2)
         while ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(50))
-            if let hit = findPluginPopup() { return hit }
+            if let hit = findSearchPopup() { return hit }
         }
         return nil
     }
 
     /// The insert popup is the AXMenu (a sibling of the strips) whose subtree contains an
     /// AXTextField subrole="AXSearchField". Returns that menu and its search field.
-    private func findPluginPopup() -> (menu: AXHandle, search: AXHandle)? {
+    private func findSearchPopup() -> (menu: AXHandle, search: AXHandle)? {
         for w in p.windows() {
             if let hit = menuWithSearchField(w, 0) { return hit }
         }
@@ -292,7 +288,7 @@ public actor AXMenuDriver {
     /// Skips the search-field item and separators (no title). "Activate Plug-ins"/"Recent" labels
     /// carry a title but collapse away once the search filter is applied (see the fixture), and even
     /// if present they have no config submenu so the config-leaf press below would refuse them.
-    private func pluginItems(in popup: AXHandle) -> [AXHandle] {
+    private func searchPopupItems(in popup: AXHandle) -> [AXHandle] {
         p.children(of: popup).filter {
             p.string(.role, of: $0) == "AXMenuItem" && !(p.string(.title, of: $0) ?? "").isEmpty
         }

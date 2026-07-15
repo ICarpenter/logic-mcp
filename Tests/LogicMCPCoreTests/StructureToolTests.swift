@@ -212,35 +212,22 @@ final class StructureToolTests: XCTestCase {
         XCTAssertTrue(names.contains("scratch"), "undo_structural should restore the deleted strip")
     }
 
-    // MARK: - set_output (NESTED routing popup)
+    // MARK: - set_output (SEARCH-driven routing popup)
     //
-    // Ground truth: Fixtures/ax/popup_output.txt (real Logic, backgrounded). The strip's output
-    // button (an AXButton whose description IS the current destination, e.g. "Bus 9") supports
-    // AXPress only — pressing it opens a popup whose AXMenu tree is NESTED: top level holds
-    // "No Output" plus "Output ▸"/"Bus ▸" submenus; real destinations ("Bus 3", "Stereo Output")
-    // are leaves one submenu deep. This models that shape: the button's child AXMenu has
-    // top-level items "No Output"/"Output"(submenu: "Stereo Output")/"Bus"(submenu: "Bus 1","Bus 3"),
-    // and pressing a leaf mutates the output button's OWN description in place (mirroring Logic
-    // updating the strip's displayed destination once the popup selection lands).
-    func providerWithOutputPopup(current: String = "Bus 9") -> (p: FakeAXProvider, outputButton: FakeAXNode) {
+    // Ground truth: Fixtures/ax/popup_output.txt + the live `axdump outputprobe` capture (2026-07-15).
+    // The strip's output button (an AXButton whose description IS the current destination, e.g.
+    // "Bus 9") supports AXPress only. Pressing it opens a routing popup that — exactly like the
+    // plugin-insert popup — attaches as a SIBLING OF THE MIXER STRIPS (a child of the mixer
+    // AXLayoutArea, NOT under the button, so `menuItems(under: button)` finds nothing) and whose
+    // FIRST item wraps an `AXTextField subrole="AXSearchField"`. `setString(dest)` FILTERS the popup:
+    // the nested "Bus ▸"/"Output ▸" submenus FLATTEN to a top-level list of every destination whose
+    // title CONTAINS the query — so typing "Bus 3" also yields "Bus 30"/"Bus 13"/"Bus 31", and
+    // grabbing the first result would route to the WRONG bus. Pressing a destination mutates the
+    // output button's own description (mirroring Logic updating the displayed destination).
+    func providerWithOutputPopup(current: String = "Bus 9", destLatency: Int = 0,
+                                 staleStripOnSelect: Bool = false)
+        -> (p: FakeAXProvider, outputButton: FakeAXNode, search: FakeAXNode) {
         let outputButton = FakeAXNode(role: "AXButton", description: current)
-
-        let noOutput = FakeAXNode(role: "AXMenuItem", title: "No Output")
-        noOutput.onPress = { outputButton.description = "No Output" }
-
-        let stereoOut = FakeAXNode(role: "AXMenuItem", title: "Stereo Output")
-        let outputSubmenu = FakeAXNode(role: "AXMenu", children: [stereoOut])
-        let outputItem = FakeAXNode(role: "AXMenuItem", title: "Output", children: [outputSubmenu])
-
-        let bus1 = FakeAXNode(role: "AXMenuItem", title: "Bus 1")
-        let bus3 = FakeAXNode(role: "AXMenuItem", title: "Bus 3")
-        bus3.onPress = { outputButton.description = "Bus 3" }
-        let busSubmenu = FakeAXNode(role: "AXMenu", children: [bus1, bus3])
-        let busItem = FakeAXNode(role: "AXMenuItem", title: "Bus", children: [busSubmenu])
-
-        let topMenu = FakeAXNode(role: "AXMenu", children: [noOutput, outputItem, busItem])
-        outputButton.children = [topMenu]
-
         // The routing slot is identified STRUCTURALLY — the plain AXButton immediately after the
         // strip's "group" popup (Fixtures/ax/strip_special.txt) — so the fake carries that anchor.
         let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
@@ -249,74 +236,123 @@ final class StructureToolTests: XCTestCase {
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
         let window = FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])
         let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
-        return (p, outputButton)
+
+        // The popup's FIRST item wraps a settable AXSearchField (like the real routing/insert popup).
+        let search = FakeAXNode(role: "AXTextField", subrole: "AXSearchField", settable: true,
+                                children: [FakeAXNode(role: "AXButton")])
+        let searchItem = FakeAXNode(role: "AXMenuItem", children: [search])
+
+        func dest(_ name: String) -> FakeAXNode {
+            let item = FakeAXNode(role: "AXMenuItem", title: name)
+            item.onPress = {
+                if staleStripOnSelect {
+                    // Model Logic RE-RENDERING the strip on a routing change (real Logic also inserts
+                    // an Aux for a fresh bus, shifting indices): the AXLayoutItem handle captured
+                    // before the press is now detached and still shows the OLD output; a FRESH strip
+                    // of the same name carries the new destination. Only re-resolving by NAME confirms.
+                    let fresh = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
+                        FakeAXNode(role: "AXPopUpButton", description: "group", title: "group"),
+                        FakeAXNode(role: "AXButton", description: name),
+                    ])
+                    area.children.removeAll { $0 === strip }
+                    area.children.append(fresh)
+                } else if destLatency > 0 {
+                    outputButton.scheduleDescriptionChange(to: name, afterReads: destLatency)
+                } else {
+                    outputButton.description = name
+                }
+            }
+            return item
+        }
+        // Catalog order deliberately puts PARTIAL matches ("Bus 30", "Bus 13") BEFORE the exact
+        // "Bus 3", so a grab-the-first-result bug would route to the wrong bus and be caught.
+        let catalog = ["No Output", "Stereo Output", "Bus 1", "Bus 30", "Bus 13", "Bus 3", "Bus 31"].map(dest)
+
+        // The popup is an AXMenu whose children are computed by a `dynamicChildren` FILTER keyed on
+        // the search field's current value — the load-bearing bit that makes these tests
+        // non-tautological: before typing only the search field shows; after typing, the flat list
+        // of CONTAINS-matches (see catalog order above).
+        let popup = FakeAXNode(role: "AXMenu", children: [searchItem])
+        popup.dynamicChildren = {
+            let q = search.stringValue ?? ""
+            if q.isEmpty { return [searchItem] }
+            return [searchItem] + catalog.filter { ($0.title ?? "").localizedCaseInsensitiveContains(q) }
+        }
+        // Pressing the output button opens the popup as a SIBLING of the strips (child of the area);
+        // cancel dismisses it — exactly the plugin-insert popup shape.
+        outputButton.onPress = { if !area.children.contains(where: { $0 === popup }) { area.children.append(popup) } }
+        outputButton.onCancel = { area.children.removeAll { $0 === popup } }
+        return (p, outputButton, search)
     }
 
-    func testSetOutputSelectsSubmenuLeafAndConfirms() async throws {
-        let (p, _) = providerWithOutputPopup()
+    /// HAPPY PATH + type-then-select oracle: the tool must find the popup by walking the WINDOW tree
+    /// (it is a SIBLING of the strips, NOT under the button — the old `menuItems(under: button)` code
+    /// found nothing on real Logic), TYPE "Bus 3" into the search field, pick the EXACT filtered
+    /// match, press it, and confirm via the strip's output slot.
+    func testSetOutputTypesDestAndSelectsExactMatch() async throws {
+        let (p, _, search) = providerWithOutputPopup()
         let d = await daemon(p)
         let r = try await SetOutputTool(daemon: d).invoke(["track": .string("vox"), "dest": .string("Bus 3")])
         guard case .object(let o) = r else { return XCTFail() }
         XCTAssertEqual(o["track"], .string("vox"))
         XCTAssertEqual(o["output"], .string("Bus 3"))
+        XCTAssertEqual(search.setStringLog, ["Bus 3"], "the driver must TYPE the dest into the routing search field")
     }
 
-    /// Regression test for the settle-poll fix, mirroring `testCreateTrackWaitsForAsyncStripAppearance`
-    /// for `settleOutput`: all THREE other set_output tests mutate the output button's description
-    /// SYNCHRONOUSLY inside `onPress` (`providerWithOutputPopup` above), so `settleOutput`'s immediate
-    /// first read always satisfies the condition and the poll loop/sleep/deadline logic is never
-    /// exercised. This fake models the async lag directly: pressing "Bus 3" schedules the output
-    /// button's description to become "Bus 3" via `scheduleDescriptionChange(to:afterReads:)` instead
-    /// of mutating it in place, so it stays "Bus 9" for several `.description` reads after the press.
-    /// Each `AXBridge.read(strip)` call reads the button's `.description` SIX times (the four
-    /// `control(strip, description:)` probes for volume/mute/solo/pan each scan the strip's
-    /// children until they miss — reaching this button every time — plus `outputButton`'s
-    /// structural match and `AXBridge.read`'s final fetch), so `afterReads: 8` guarantees the
-    /// change is still hidden through the whole first `read(strip)` call and only lands on the
-    /// second (i.e. after a real 50ms sleep + retry). Against a `settleOutput` reduced to a single
-    /// immediate read this test FAILS with "output change not confirmed", observed "Bus 9"
-    /// (verified by stashing the fix); the real settle-poll waits it out and succeeds.
-    func testSetOutputSettlesThroughAsyncLag() async throws {
-        let outputButton = FakeAXNode(role: "AXButton", description: "Bus 9")
-        let bus1 = FakeAXNode(role: "AXMenuItem", title: "Bus 1")
-        let bus3 = FakeAXNode(role: "AXMenuItem", title: "Bus 3")
-        bus3.onPress = { outputButton.scheduleDescriptionChange(to: "Bus 3", afterReads: 8) }
-        let busSubmenu = FakeAXNode(role: "AXMenu", children: [bus1, bus3])
-        let busItem = FakeAXNode(role: "AXMenuItem", title: "Bus", children: [busSubmenu])
-        let noOutput = FakeAXNode(role: "AXMenuItem", title: "No Output")
-        let topMenu = FakeAXNode(role: "AXMenu", children: [noOutput, busItem])
-        outputButton.children = [topMenu]
-
-        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
-            FakeAXNode(role: "AXPopUpButton", description: "group", title: "group"), outputButton,
-        ])
-        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
-        let window = FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])
-        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
+    /// EXACT-MATCH DISCIPLINE: filtering "Bus 3" also returns "Bus 30"/"Bus 13"/"Bus 31" (listed
+    /// BEFORE the exact match in the catalog). Grabbing the first result would route to the WRONG
+    /// bus; the tool must press the exact title.
+    func testSetOutputPicksExactMatchNotFirstFilteredPartial() async throws {
+        let (p, _, _) = providerWithOutputPopup()
         let d = await daemon(p)
         let r = try await SetOutputTool(daemon: d).invoke(["track": .string("vox"), "dest": .string("Bus 3")])
         guard case .object(let o) = r else { return XCTFail() }
-        XCTAssertEqual(o["track"], .string("vox"))
+        XCTAssertEqual(o["output"], .string("Bus 3"), "must press the EXACT match, not the first filtered partial")
+    }
+
+    /// FALSE-NEGATIVE REGRESSION (real Logic, 2026-07-15): selecting a routing destination re-renders
+    /// the strip (routing to a fresh bus even inserts an Aux, shifting indices), INVALIDATING the
+    /// AXLayoutItem handle captured before the press. `settleOutput(strip:)` read that stale handle's
+    /// output as "unreadable"/old for the full timeout, so set_output returned "output change not
+    /// confirmed" for a routing that ACTUALLY LANDED — a false negative. The confirm must re-resolve
+    /// the strip by NAME (a fresh mixer walk). Here pressing "Bus 3" REPLACES the strip node; the
+    /// pre-press handle stays "Bus 9", only a re-find sees "Bus 3".
+    func testSetOutputConfirmsAfterStripHandleGoesStale() async throws {
+        let (p, _, _) = providerWithOutputPopup(staleStripOnSelect: true)
+        let d = await daemon(p)
+        let r = try await SetOutputTool(daemon: d).invoke(["track": .string("vox"), "dest": .string("Bus 3")])
+        guard case .object(let o) = r else { return XCTFail("set_output should CONFIRM via a re-find, not false-negative") }
+        XCTAssertEqual(o["output"], .string("Bus 3"))
+    }
+
+    /// SETTLE-POLL through async AX lag: pressing the dest schedules the output button's description
+    /// to change only after several `.description` reads, so `settleOutput` must poll it out rather
+    /// than trust an immediate read (afterReads:8 — read() probes the description ~6× per call).
+    func testSetOutputSettlesThroughAsyncLag() async throws {
+        let (p, _, _) = providerWithOutputPopup(destLatency: 8)
+        let d = await daemon(p)
+        let r = try await SetOutputTool(daemon: d).invoke(["track": .string("vox"), "dest": .string("Bus 3")])
+        guard case .object(let o) = r else { return XCTFail() }
         XCTAssertEqual(o["output"], .string("Bus 3"), "settleOutput should poll until the async description change lands")
     }
 
     func testSetOutputTopLevelDestWorks() async throws {
-        let (p, _) = providerWithOutputPopup()
+        let (p, _, _) = providerWithOutputPopup()
         let d = await daemon(p)
         let r = try await SetOutputTool(daemon: d).invoke(["track": .string("vox"), "dest": .string("No Output")])
         guard case .object(let o) = r else { return XCTFail() }
         XCTAssertEqual(o["output"], .string("No Output"))
     }
 
-    func testSetOutputUnknownDestThrowsAXWithAvailableTitles() async throws {
-        let (p, _) = providerWithOutputPopup()
+    func testSetOutputUnknownDestThrowsAX() async throws {
+        let (p, _, _) = providerWithOutputPopup()
         let d = await daemon(p)
         do {
             _ = try await SetOutputTool(daemon: d).invoke(["track": .string("vox"), "dest": .string("Bus 99")])
             XCTFail("expected a ToolFailure")
         } catch let f as ToolFailure {
             XCTAssertEqual(f.layer, "ax")
-            XCTAssertTrue(f.observed?.contains("Bus 3") ?? false, "should list available destinations: \(f.observed ?? "nil")")
+            XCTAssertTrue(f.error.contains("no routing destination"), "should be the not-found error: \(f.error)")
         }
     }
 
