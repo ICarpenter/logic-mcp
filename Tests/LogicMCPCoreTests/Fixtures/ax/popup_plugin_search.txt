@@ -1,0 +1,63 @@
+# Plugin-insert popup — SEARCH-BASED — captured 2026-07-15, Logic Pro 12.3, mcp_test, vox strip
+# (Logic BACKGROUNDED, via `logic-mcp axdump insertprobe vox [query]`).
+#
+# WHY THIS SUPERSEDES popup_plugin.txt's walk strategy:
+# The old insert_plugin walked the menu hierarchy under the pressed slot button and matched
+# top-level (Recent) + one category deep. It FAILED on real Logic with an EMPTY read, for TWO
+# reasons discovered here:
+#   1. STRUCTURAL (the real killer): the popup AXMenu does NOT attach as a child of the pressed
+#      "audio plug-in" button. It attaches as a SIBLING OF THE MIXER STRIPS — i.e. a child of the
+#      mixer AXLayoutArea, at the SAME depth as each strip's AXLayoutItem. `menuItems(under: slot)`
+#      looks under the button and finds nothing, forever — no sleep length fixes it.
+#   2. COVERAGE: "Recent + one category deep" misses plugins that are neither recent nor exactly one
+#      level down (e.g. Compressor lives under Dynamics; sub-brands nest 3 deep under a vendor).
+#
+# THE FIX (proven live): drive the popup's SEARCH FIELD.
+#   - AXSetValue(string) on the search field TRIGGERS Logic's filter — NO keystrokes / CGEvents, so
+#     the no-focus invariant holds. `value=` reflects back what we set.
+#   - After filtering, the menu flattens to a FLAT list of every plugin whose name matches; pick the
+#     EXACT case-insensitive title match (typing "Compressor" also returns "Multipressor",
+#     "Squash Compressor", "UAD … Compressor" — first-result would grab the wrong one).
+#   - Each result AXMenuItem has a submenu of channel-config leaves ("Stereo" / "Dual Mono"); press
+#     the "Stereo" leaf (or first available).
+#
+# ================= STRUCTURE — popup just after opening (before typing) =================
+# Indentation preserved from axdump. Note the AXMenu is a SIBLING of the strips.
+#
+#   AXLayoutArea description="Mixer"
+#     AXLayoutItem description="vox"            <- a strip
+#     ... more strips ...
+#     AXLayoutItem description="Master"         <- last strip
+#     AXMenu                                    <- POPUP, sibling of the strips (NOT under a button)
+#       AXMenuItem
+#         AXTextField subrole="AXSearchField" settable=true   <- THE SEARCH FIELD (settable)
+#           AXButton                                          (the field's clear button)
+#       AXMenuItem title="Activate Plug-ins"
+#       AXMenuItem                              (separator)
+#       AXMenuItem title="Recent"              (label)
+#       AXMenuItem title="Multipressor"   -> AXMenu[ "Stereo", "Dual Mono" ]   <- RECENT at top
+#       AXMenuItem title="Channel EQ"     -> AXMenu[ "Stereo", "Dual Mono" ]
+#       AXMenuItem title="Compressor"     -> AXMenu[ "Stereo", "Dual Mono" ]
+#       ... more recent ...
+#       AXMenuItem                              (separator)
+#       AXMenuItem title="Amps and Pedals" -> AXMenu[ plugin -> AXMenu[ "Stereo","Dual Mono" ] ]  <- CATEGORY, 3 deep
+#       AXMenuItem title="Delay"          -> ...
+#       AXMenuItem title="Dynamics"       -> ...   <- Compressor also lives here
+#       ... more categories ...
+#
+# ================= STRUCTURE — after AXSetValue("Compressor") on the search field =================
+# The menu FILTERS to a flat match list; categories collapse away. `value=` echoes the query.
+#
+#   AXMenu
+#     AXMenuItem
+#       AXTextField subrole="AXSearchField" value="Compressor" settable=true
+#     AXMenuItem title="Compressor"                    -> AXMenu[ "Stereo", "Dual Mono" ]   <- EXACT match: pick THIS
+#     AXMenuItem title="Multipressor"                  -> AXMenu[ "Stereo", "Dual Mono" ]
+#     AXMenuItem title="Squash Compressor"             -> AXMenu[ "Stereo", "Dual Mono" ]
+#     AXMenuItem title="UAD 4K Buss Compressor"        -> AXMenu[ "Stereo", "Dual Mono" ]
+#     AXMenuItem title="UAD elysia alpha compressor V2"-> AXMenu[ "Stereo", "Dual Mono" ]
+#     AXMenuItem title="UAD Precision Buss Compressor" -> AXMenu[ "Stereo", "Dual Mono" ]
+#     AXMenuItem title="UAD SSL G Bus Compressor"      -> AXMenu[ "Stereo", "Dual Mono" ]
+#     AXMenuItem title="UADx Fairchild 660 Compressor" -> AXMenu[ "Stereo", "Dual Mono" ]
+#     AXMenuItem title="UADx Fairchild 670 Compressor" -> AXMenu[ "Stereo", "Dual Mono" ]
+#     ... (all partial matches; exact-title pick is mandatory) ...

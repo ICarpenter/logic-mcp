@@ -102,7 +102,7 @@ func exitPluginEdit(_ daemon: Daemon) async {
 /// error if the strip/slot has no addressable plugin window.
 func axEnterPlugin(_ daemon: Daemon, trackName: String, slot: Int) async throws
     -> (name: String, window: AXHandle, params: [(name: String, handle: AXHandle)]) {
-    let strip = try await daemon.ax.find(trackName)
+    let strip = try await daemon.mixerStrip(named: trackName)
     let name = await daemon.ax.read(strip).name
     let groups = await daemon.ax.pluginGroups(strip)
     guard slot >= 0, slot < groups.count else {

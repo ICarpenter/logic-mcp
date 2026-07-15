@@ -1,0 +1,37 @@
+# Output-routing popup — captured 2026-07-13, Logic Pro 12.3, mcp_test, vox strip (Logic BACKGROUNDED).
+#
+# The strip's output button is the AXButton whose description is the CURRENT destination (e.g.
+# "Bus 9") — i.e. it has no fixed label; AXBridge.outputButtonHandle finds it by exclusion.
+#   output button: desc="Bus 9"   actions=["AXPress"]     (NOTE: AXShowMenu is NOT supported)
+#
+# The popup's AXMenu tree is READABLE (like the menu bar) with Logic backgrounded. It is NESTED —
+# destinations live under submenus, NOT as flat top-level items:
+#
+# AXMenu (top level, 12 items)
+#   -                      (separator)
+#   Bus 9 → Aux 1          (current routing, informational)
+#   No Output
+#   Output       ▸ (submenu)
+#   Bus          ▸ (submenu)
+#   Stereo Pan             (pan-mode items — NOT routing destinations)
+#   Balance
+#   Binaural Panner
+#
+# AXMenu "Output" submenu (18 items)
+#   Stereo Output
+#   Output 3-4
+#   Output 5-6
+#   … Output 33-34
+#   Surround
+#
+# AXMenu "Bus" submenu
+#   Bus 1 … Bus N   (the project's buses; vox currently routes to Bus 9)
+#
+# IMPLICATION for set_output(track, dest):
+#   A destination like "Bus 3" or "Stereo Output" is a LEAF inside a submenu. The tool must descend:
+#     ["Bus", "Bus 3"]  or  ["Output", "Stereo Output"]
+#   Do NOT assume a flat item list. Preferred implementation: search the popup's menu tree for a LEAF
+#   whose title matches `dest` (case-insensitive), at top level OR one submenu deep, and press it —
+#   so callers pass just `dest` and the tool figures out the path. "No Output" is a valid top-level dest.
+#   Beware: "Stereo Pan"/"Balance"/"Binaural Panner" are pan MODES, not destinations — a leaf-title
+#   search will not match a real bus/output name, so this is safe, but don't offer them as dests.

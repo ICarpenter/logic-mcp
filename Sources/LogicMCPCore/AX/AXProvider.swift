@@ -25,6 +25,7 @@ public enum AXAttr: String {
 
 public enum AXAction: String {
     case press = "AXPress", increment = "AXIncrement", decrement = "AXDecrement"
+    case showMenu = "AXShowMenu", cancel = "AXCancel"
 }
 
 /// Thrown when Logic (or Accessibility permission) is unavailable.
@@ -43,4 +44,6 @@ public protocol AXProvider: Sendable {
     func setNumber(_ v: Double, of h: AXHandle) throws
     func perform(_ action: AXAction, on h: AXHandle) throws
     func minMax(of h: AXHandle) -> (Double?, Double?)
+    func menuBar() -> AXHandle?
+    func setString(_ s: String, of h: AXHandle) throws
 }

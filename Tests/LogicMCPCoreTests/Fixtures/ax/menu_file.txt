@@ -1,0 +1,115 @@
+AXMenu settable=false
+  AXMenuItem title="New" settable=false
+  AXMenuItem title="New from Template…" settable=false
+  AXMenuItem title="Open…" settable=false
+  AXMenuItem title="Open Recent" settable=false
+    AXMenu settable=false
+      AXMenuItem title="mcp_test.logicx" settable=false
+      AXMenuItem title="Album.logicx" settable=false
+      AXMenuItem title="Lion Fish TT mix.logicx" settable=false
+      AXMenuItem title="The Turn.logicx —  The Turn" settable=false
+      AXMenuItem title="The Turn.logicx —  Logic" settable=false
+      AXMenuItem title="Splatter-tronic.logicx" settable=false
+      AXMenuItem title="Crystal Ship.logicx" settable=false
+      AXMenuItem title="Bad Advice.logicx" settable=false
+      AXMenuItem title="Teach Your Children Marx.logicx" settable=false
+      AXMenuItem settable=false
+      AXMenuItem title="Clear Menu" settable=false
+  AXMenuItem settable=false
+  AXMenuItem title="Close" settable=false
+  AXMenuItem title="Close Project" settable=false
+  AXMenuItem title="Save" settable=false
+  AXMenuItem title="Save As…" settable=false
+  AXMenuItem title="Save A Copy As…" settable=false
+  AXMenuItem title="Save as Template…" settable=false
+  AXMenuItem title="Revert to" settable=false
+    AXMenu settable=false
+  AXMenuItem settable=false
+  AXMenuItem title="Project Alternatives" settable=false
+    AXMenu settable=false
+      AXMenuItem title="New Alternative…" settable=false
+      AXMenuItem title="Edit Alternatives…" settable=false
+      AXMenuItem title="Export Alternative as Project…" settable=false
+      AXMenuItem settable=false
+  AXMenuItem title="Project Management" settable=false
+    AXMenu settable=false
+      AXMenuItem title="Clean Up…" settable=false
+      AXMenuItem title="Consolidate…" settable=false
+      AXMenuItem title="Rename…" settable=false
+      AXMenuItem title="Show in Finder…" settable=false
+  AXMenuItem title="Project Settings" settable=false
+    AXMenu settable=false
+      AXMenuItem title="General…" settable=false
+      AXMenuItem title="Audio…" settable=false
+      AXMenuItem title="Recording…" settable=false
+      AXMenuItem title="Smart Tempo…" settable=false
+      AXMenuItem title="MIDI…" settable=false
+      AXMenuItem title="Score…" settable=false
+      AXMenuItem title="Movie…" settable=false
+      AXMenuItem title="Synchronization…" settable=false
+      AXMenuItem title="Metronome…" settable=false
+      AXMenuItem title="Tuning…" settable=false
+      AXMenuItem title="Assets…" settable=false
+      AXMenuItem settable=false
+      AXMenuItem title="Import Project Settings…" settable=false
+  AXMenuItem settable=false
+  AXMenuItem title="Page Setup…" settable=false
+  AXMenuItem title="Print" settable=false
+  AXMenuItem settable=false
+  AXMenuItem title="Movie" settable=false
+    AXMenu settable=false
+      AXMenuItem settable=false
+      AXMenuItem title="Open Movie…" settable=false
+      AXMenuItem title="Remove Movie" settable=false
+      AXMenuItem settable=false
+      AXMenuItem title="Show in Finder" settable=false
+      AXMenuItem title="Move Movie Files out of Project…" settable=false
+      AXMenuItem settable=false
+      AXMenuItem title="Import Audio from Movie" settable=false
+      AXMenuItem title="Export Audio to Movie…" settable=false
+  AXMenuItem settable=false
+  AXMenuItem title="Import" settable=false
+    AXMenu settable=false
+      AXMenuItem title="Logic Projects…" settable=false
+      AXMenuItem title="Live Loops Grid…" settable=false
+      AXMenuItem title="Audio File…" settable=false
+      AXMenuItem title="MIDI File…" settable=false
+      AXMenuItem title="MusicXML…" settable=false
+      AXMenuItem settable=false
+      AXMenuItem title="Final Cut Pro XML…" settable=false
+      AXMenuItem title="AAF…" settable=false
+      AXMenuItem title="Create Project from ADM BWF…" settable=false
+      AXMenuItem title="Other…" settable=false
+  AXMenuItem title="Export" settable=false
+    AXMenu settable=false
+      AXMenuItem title="Region/Cell to Loop Library…" settable=false
+      AXMenuItem title="Regions as Audio Files…" settable=false
+      AXMenuItem title="Audio Files As…" settable=false
+      AXMenuItem settable=false
+      AXMenuItem title="Selection as Audio File…" settable=false
+      AXMenuItem title="Selection as MIDI File…" settable=false
+      AXMenuItem settable=false
+      AXMenuItem title="Tracks as Audio Files…" settable=false
+      AXMenuItem title="All Tracks as Audio Files…" settable=false
+      AXMenuItem title="All MIDI Tracks as MIDI File…" settable=false
+      AXMenuItem settable=false
+      AXMenuItem title="Project as AAF File…" settable=false
+      AXMenuItem title="Project to Final Cut Pro XML…" settable=false
+      AXMenuItem title="Project as Spatial Audio…" settable=false
+      AXMenuItem title="Score as MusicXML…" settable=false
+  AXMenuItem title="Bounce" settable=false
+    AXMenu settable=false
+      AXMenuItem title="Regions in Place…" settable=false
+      AXMenuItem title="Tracks in Place…" settable=false
+      AXMenuItem title="And Replace All Tracks…" settable=false
+      AXMenuItem settable=false
+      AXMenuItem title="Project or Section…" settable=false
+  AXMenuItem title="Share" settable=false
+    AXMenu settable=false
+      AXMenuItem title="Song to iTunes…" settable=false
+      AXMenuItem title="Song to Voice Memos…" settable=false
+      AXMenuItem settable=false
+      AXMenuItem title="AirDrop…" settable=false
+      AXMenuItem title="Mail…" settable=false
+      AXMenuItem settable=false
+      AXMenuItem title="Project to GarageBand for iOS…" settable=false

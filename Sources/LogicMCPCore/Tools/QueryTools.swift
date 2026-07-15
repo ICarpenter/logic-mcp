@@ -78,7 +78,7 @@ public struct GetProjectOverviewTool: LogicTool {
     let daemon: Daemon
     public func invoke(_ args: [String: Value]) async throws -> Value {
         if await daemon.model.snapshot.staleAt != nil {
-            _ = try? await daemon.axMixer.syncTracks()   // best effort; still returns whatever we have
+            _ = try? await daemon.syncMixer()   // best effort; still returns whatever we have
         }
         return await overviewValue(daemon.model.snapshot)
     }
@@ -95,7 +95,7 @@ public struct GetTrackTool: LogicTool {
     let daemon: Daemon
     public func invoke(_ args: [String: Value]) async throws -> Value {
         let name = try requireString(args, "name", tool: name)
-        if await daemon.model.snapshot.staleAt != nil { _ = try? await daemon.axMixer.syncTracks() }
+        if await daemon.model.snapshot.staleAt != nil { _ = try? await daemon.syncMixer() }
         return trackValue(try await daemon.model.track(named: name))
     }
 }
@@ -109,7 +109,7 @@ public struct RefreshStateTool: LogicTool {
     ])
     let daemon: Daemon
     public func invoke(_ args: [String: Value]) async throws -> Value {
-        _ = try await daemon.axMixer.syncTracks()
+        _ = try await daemon.syncMixer()
         return await overviewValue(daemon.model.snapshot)
     }
 }

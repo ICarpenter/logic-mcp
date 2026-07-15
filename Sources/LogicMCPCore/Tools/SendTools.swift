@@ -17,7 +17,7 @@ public struct SetSendTool: LogicTool {
         }
         // Resolve via AX first so a bad/ambiguous track name still gives the precise
         // AXBridge.find() error, not a blanket "not available" that would mask it.
-        let strip = try await daemon.ax.find(trackName)
+        let strip = try await daemon.mixerStrip(named: trackName)
         let name = await daemon.ax.read(strip).name
         // Real Logic's mixer AX tree exposes no settable send-level control (only a
         // send-slot button; see ax-findings.md §Sends). The old MCU send path

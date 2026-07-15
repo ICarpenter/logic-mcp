@@ -1,0 +1,61 @@
+AXMenu settable=false
+  AXMenuItem title="New Tracks…" settable=false
+  AXMenuItem title="New Audio Track" settable=false
+  AXMenuItem title="New Software Instrument Track" settable=false
+  AXMenuItem title="New Session Player SI Track…" settable=false
+  AXMenuItem title="New External MIDI Track" settable=false
+  AXMenuItem title="Other" settable=false
+    AXMenu settable=false
+      AXMenuItem title="New Track With Duplicate Settings" settable=false
+      AXMenuItem title="New Track With Duplicate Settings and Content" settable=false
+      AXMenuItem title="New Track With Next Channel" settable=false
+      AXMenuItem title="New Track With Same Channel" settable=false
+      AXMenuItem settable=false
+      AXMenuItem title="New Track For Overlapped Regions" settable=false
+      AXMenuItem title="New Track For Selected Regions" settable=false
+  AXMenuItem title="Rename Track" settable=false
+  AXMenuItem settable=false
+  AXMenuItem title="Delete Track" settable=false
+  AXMenuItem title="Delete Unused Tracks" settable=false
+  AXMenuItem settable=false
+  AXMenuItem title="Create Track Stack…" settable=false
+  AXMenuItem title="Flatten Stack" settable=false
+  AXMenuItem title="Convert Folder Stack to Summing Stack" settable=false
+  AXMenuItem settable=false
+  AXMenuItem title="Global Tracks" settable=false
+    AXMenu settable=false
+      AXMenuItem title="Show Global Tracks" settable=false
+      AXMenuItem title="Configure Global Tracks…" settable=false
+      AXMenuItem title="Show Single Global Track" settable=false
+      AXMenuItem settable=false
+      AXMenuItem title="Show Arrangement Track" settable=false
+      AXMenuItem title="Show Marker Track" settable=false
+      AXMenuItem title="Show Movie Track" settable=false
+      AXMenuItem title="Show Signature Track" settable=false
+      AXMenuItem title="Show Chord Track" settable=false
+      AXMenuItem title="Show Tempo Track" settable=false
+      AXMenuItem title="Show Beat Mapping Track" settable=false
+  AXMenuItem title="Show Track Alternatives" settable=false
+  AXMenuItem title="Show Master Track" settable=false
+  AXMenuItem settable=false
+  AXMenuItem title="Replace or Double Drum Track…" settable=false
+  AXMenuItem title="Convert Regions to New Sampler Track…" settable=false
+  AXMenuItem settable=false
+  AXMenuItem title="Search and Select Track…" settable=false
+  AXMenuItem title="Hide/Show Selected Tracks" settable=false
+  AXMenuItem title="Hide/Show Unselected Tracks" settable=false
+  AXMenuItem title="Unhide All Tracks" settable=false
+  AXMenuItem title="Toggle Hide View" settable=false
+  AXMenuItem settable=false
+  AXMenuItem title="Sort Tracks by" settable=false
+    AXMenu settable=false
+      AXMenuItem title="MIDI Channel" settable=false
+      AXMenuItem title="Audio Channel" settable=false
+      AXMenuItem title="Output Channel" settable=false
+      AXMenuItem title="Instrument Name" settable=false
+      AXMenuItem title="Track Name" settable=false
+      AXMenuItem title="Used, Unused" settable=false
+      AXMenuItem title="Creation Date" settable=false
+  AXMenuItem title="Assign Track Color…" settable=false
+  AXMenuItem title="Assign Track Icon…" settable=false
+  AXMenuItem title="Configure Track Header…" settable=false

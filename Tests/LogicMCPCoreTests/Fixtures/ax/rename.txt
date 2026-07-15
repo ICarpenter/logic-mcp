@@ -1,0 +1,35 @@
+# rename_track feasibility — RESOLVED 2026-07-13 (controller probe, Logic 12.3, mcp_test).
+#
+# FINDING: renaming a track is NOT achievable via no-focus AX. AX text-field writes into Logic
+# accept the value COSMETICALLY but the edit never COMMITS to the track.
+#
+# Three AXTextFields hold the track name; probed all:
+#   1. Mixer strip name field   (AXLayoutItem/AXTextField desc="name")  settable=FALSE, no actions.
+#      AXSetValue returns success (0) but the value does not change. A silent no-op.
+#   2. Arrange track-header name field (desc="name")                    settable=FALSE, no actions.
+#   3. Inspector "Track:" field (AXTextField, desc empty)               settable=TRUE, [AXShowMenu, AXConfirm]
+#      AXSetValue DOES change the field's displayed value, and AXConfirm returns success — but the
+#      TRACK IS NEVER RENAMED (mixer strip description unchanged, polled 3s). Pressing
+#      `Track ▸ Rename Track` FIRST and then setting + confirming also fails.
+#
+# Root cause: AXSetValue on an AppKit text field does not open a real edit session; committing an
+# edit needs actual keyboard input (CGEvent), which requires Logic frontmost — breaking the phase's
+# no-focus invariant.
+#
+# DECISION (user, 2026-07-13): DEFER rename.
+#   - `rename_track` returns a structured ToolFailure(layer:"ax") "not available via AX in this
+#     release" — the same honest pattern as Phase 2's `set_send`.
+#   - `create_track` DROPS its `name` argument: Logic assigns the default name (e.g. "Audio 1").
+#     Do NOT accept a `name` and silently ignore it.
+#   - Focus-stealing CGEvent typing was explicitly rejected to keep no-focus absolute.
+#
+# ---------------------------------------------------------------------------------------------
+# SEPARATE BUG FOUND WHILE PROBING (Phase 2 latent, must fix):
+# `AXBridge.mixerArea()` DFS's every window for the FIRST `AXLayoutArea desc="Mixer"` and takes it.
+# But the ARRANGE window's Inspector contains a MINI-MIXER with the same role+description, showing
+# only the selected track's strip (+ its output) — e.g. ["vox", "Aux 1"] instead of all 20 strips.
+# It currently works only because the Mixer window happens to come first in windows(). If window
+# order shifts, refresh_state would silently read 1–2 strips instead of 20 — this project's
+# "wrong view" bug class.
+# FIX: disambiguate — prefer the mixer area with the MOST AXLayoutItem children (or the one whose
+# containing window title contains "Mixer"), not merely the first match.

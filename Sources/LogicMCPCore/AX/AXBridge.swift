@@ -19,8 +19,8 @@ public actor AXBridge {
     ///
     /// So: only ever bind a mixer area whose containing WINDOW is titled "…Mixer…"
     /// (`"Untitled 1 - Mixer: Tracks"`, vs the arrange window's `"Untitled 1 - Tracks"` — see
-    /// Fixtures/ax/strip_special.txt). If there is none, THROW — the error tells the user to open
-    /// the Mixer (⌘2 / Window ▸ Open Mixer). (A later phase can auto-open it via the menu driver.)
+    /// Fixtures/ax/strip_special.txt). If there is none, THROW; the caller
+    /// (`Daemon.ensureMixerWindow()`) self-heals by pressing `Window ▸ Open Mixer` and retrying.
     /// The most-strips tiebreak is kept for the pathological case of a PROJECT whose name itself
     /// contains "Mixer" (then the arrange window's title matches too, and the real mixer still
     /// wins on strip count).
@@ -55,9 +55,9 @@ public actor AXBridge {
     }
 
     /// Is Logic's Mixer WINDOW open? (i.e. does a window whose title contains "Mixer" hold a
-    /// mixer layout area). The arrange window's Inspector mini-mixer does NOT count. A no-focus
-    /// oracle for whether mixer reads will succeed; when false, `refresh_state` and the other
-    /// mixer tools throw the "no mixer surface" error until the user opens the Mixer window.
+    /// mixer layout area). The arrange window's Inspector mini-mixer does NOT count. The
+    /// no-focus oracle for `Daemon.ensureMixerWindow()`, which presses `Window ▸ Open Mixer`
+    /// when this is false and settle-polls it back to true.
     public func hasMixerWindow() -> Bool {
         !mixerAreas().isEmpty
     }

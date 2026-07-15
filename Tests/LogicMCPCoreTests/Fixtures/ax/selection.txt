@@ -1,0 +1,47 @@
+# TRACK SELECTION — RESOLVED 2026-07-13 (controller probe, Logic 12.3, mcp_test). CRITICAL.
+#
+# FINDING: **AX cannot change Logic's track selection.** There is no working mechanism.
+#
+#   Mixer strip (AXLayoutItem):
+#       actions = ["AXShowMenu"]   <- NO AXPress
+#       AXSelected: not present, not settable
+#       AXUIElementPerformAction(strip, AXPress)          -> -25200 (unsupported), selection unchanged
+#       AXUIElementSetAttributeValue(strip, AXSelected)   -> returns 0 (SUCCESS) but selection UNCHANGED
+#
+#   Arrange track header (AXLayoutItem desc='Track 3 “guitar”'):
+#       actions = ["AXShowMenu"]   <- NO AXPress
+#       AXSelected: not settable
+#       AXPress                                            -> returns 0 (SUCCESS) but selection UNCHANGED
+#       AXUIElementSetAttributeValue(header, AXSelected)   -> returns 0 (SUCCESS) but selection UNCHANGED
+#
+#   Selection oracle used: the ARRANGE window's Inspector mini-mixer, whose single AXLayoutItem is the
+#   SELECTED track. It stayed on "Backup Vox" through every attempt above.
+#
+#   NOTE THE AX LIE: both AXPress and AXSetValue RETURN SUCCESS (0) while doing nothing. Never trust
+#   an AX return code in this app — verify by re-reading an independent oracle.
+#
+# ================================ CONSEQUENCES ================================
+#
+# Any tool that depends on Logic's SELECTION is unimplementable via AX:
+#
+#   delete_track   *** DANGEROUS ***  `Track ▸ Delete Track` deletes the SELECTED track. Since AX
+#                  cannot set the selection, the tool would delete WHATEVER THE USER LAST SELECTED —
+#                  the wrong-track destructive bug, this project's worst class. It was caught live:
+#                  a probe "selected" vox then pressed Delete Track, and Logic deleted a *different*
+#                  (the actually-selected) track. DISABLED — returns a structured error, never deletes.
+#
+#   select_track   Silently NO-OPS: the press does nothing, but the tool reads the name back off the
+#                  STRIP (not the selection) and reports success. A FALSE POSITIVE. Left in place per
+#                  user decision (it is useless, not destructive) — but its description now says so.
+#
+#   rename_track   Already deferred. Root cause is the SAME: `Track ▸ Rename Track` renames the
+#                  SELECTED track. (The earlier "AX text edits never commit" diagnosis was wrong/
+#                  incomplete — a rename DID eventually commit, on whatever track was selected.)
+#
+# Tools that DO work never need the selection — they act on a strip's OWN controls, or are global:
+#   create_track (Track ▸ New Audio Track), set_output (the strip's own routing popup),
+#   insert_plugin (the strip's own insert slot), undo_structural (Edit ▸ Undo).
+#
+# FUTURE: a real selection would need either a CGEvent mouse click at the strip's screen coords
+# (requires focus; breaks the no-focus invariant) or an unexplored path (the strip's AXShowMenu
+# context menu may offer per-track actions that don't depend on selection — untested).

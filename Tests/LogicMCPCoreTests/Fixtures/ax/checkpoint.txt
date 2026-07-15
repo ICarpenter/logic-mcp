@@ -1,0 +1,24 @@
+# Checkpoint feasibility — RESOLVED 2026-07-13, Logic Pro 12.3, mcp_test (controller probe).
+#
+# FINDING: File-menu snapshot mechanisms are ALL DISABLED, confirmed real (not stale — re-checked
+# AFTER opening the File menu via AXPress, which validates items):
+#   File ▸ Save                     enabled=false
+#   File ▸ Save As…                 enabled=false
+#   File ▸ Save A Copy As…          enabled=false   (the intended checkpoint fallback — also off)
+#   File ▸ Project Alternatives     enabled=false   (children New Alternative…/Edit Alternatives… off)
+# Opening the File menu did NOT steal focus (frontmost stayed iTerm2).
+#
+# Feasibility of structural ops themselves is CONFIRMED (net-zero probe):
+#   Track ▸ New Audio Track  → AXPress result 0, mixer strips 20→21, LOGIC BACKGROUNDED (no-focus).
+#   Edit ▸ Undo              → AXPress restored 21→20. Enabled=true, works.
+#
+# DECISION (user, 2026-07-13): UNDO-BASED SAFETY.
+#   - `delete_track` ships; its safety is that structural ops are reversible via Logic-native
+#     `Edit ▸ Undo` (drivable by AXMenuDriver.pressMenuPath(["Edit","Undo"])). No auto-checkpoint.
+#   - The standalone `checkpoint(label)` snapshot tool is DEFERRED (its Save/Alternatives mechanism
+#     is unavailable in this session; revisit if a project state / format re-enables saves).
+#   - Net-zero smoke: create_track then delete_track (no checkpoint needed — create+delete is net-zero).
+#
+# Why saves are disabled is not fully understood (Save-off = no unsaved changes, but Save As/Copy
+# being off even then is unusual — possibly a project-format or key-window condition). Not chased
+# further; the undo-based model sidesteps it.
