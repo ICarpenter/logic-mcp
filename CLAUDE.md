@@ -2,35 +2,39 @@
 
 A local MCP server (Swift daemon, MCP over stdio) that gives Claude end-to-end control of Logic Pro — a "cockpit" for collaborating with an agent on production and engineering work.
 
-## Status (as of 2026-07-10)
+## Status (as of 2026-07-15)
 
-- **Design spec approved:** `docs/superpowers/specs/2026-07-08-logic-mcp-design.md` is the original architecture.
-  **Phase 2 redraws one boundary** — see `docs/superpowers/specs/2026-07-10-ax-mixer-core-design.md`.
-- **Read `.superpowers/sdd/HANDOFF.md` first.** It carries current state, the AX pivot, and known limitations.
-  Per-task history + all findings are in `.superpowers/sdd/progress.md`; real-Logic ground truth (the crucial
-  `AXSetValue` ±1-nudge discovery, slider ranges, plugin/send layout) is in `.superpowers/sdd/ax-findings.md`.
-- **Phase 1 (MCUBridge) DONE** (`d50a2bb` + fixes). **Phase 2 (AX Mixer Core) code-complete on branch
-  `feat/ax-mixer-core`**, 141 tests green, reviewed per-task + whole-branch. **Real-Logic smoke still PENDING.**
-- **THE PIVOT:** we discovered Logic 12.3's mixer is fully **Accessibility-addressable AND AX writes land with
-  Logic in the BACKGROUND** (no focus stolen) — which was supposedly MCU's only edge. So **AX is now the primary
-  no-focus read/write + self-verification path for the mixer**; MCU is retained for transport, metering, and as
-  a no-Accessibility fallback. `set_volume`/`set_pan`/`set_mute`/`set_solo`/`refresh_state`/`get_*` all read/write
-  via AX now (exact dB from a title string, direct pan value, `val=on/off` — none of MCU's calibration/echo/toggle
-  hazards).
-- **The dangerous wrong-track bug is RESOLVED, not fixed** — `get_plugin_params`/`set_plugin_param` address the
-  plugin per-strip via the Accessibility tree (no "selected track" to race), so `set_plugin_param` is safe to call.
-  The old MCU plugin/send paths are retired (zero callers). `set_send` currently returns a structured
-  "not available via AX" error (sends aren't cleanly AX-settable yet — deferred).
-- **KEY real-Logic fact (see ax-findings.md):** `AXUIElementSetAttributeValue` on Logic sliders **nudges ±1 toward
-  the target, it does NOT set absolutely.** Every value write CONVERGES by repeated nudging (`AXBridge.nudgeToRaw`
-  for pan/plugins; `axConvergeVolume` for volume via the dB title). Do not "fix" this into a single set.
-- **Known limitations to verify/fix in the real-Logic smoke:** (1) `set_automation_mode` (last MCU tool) can
-  refresh the current bank's `volumeDB` from the MCU curve estimate, drifting AX-accurate values; (2)
-  `get/set_plugin_param` can target the WRONG SLOT if a plugin window for that track is already open (windows are
-  keyed only by track title); (3) the shadow model never re-arms `staleAt`, so a hand-edit in Logic reads stale
-  until `refresh_state`. Full smoke checklist: `docs/integration-smoke.md`.
-- **Later phases:** Phase 3 = AX structural ops (`create_track`, `insert_plugin`, routing, quantize, `checkpoint`)
-  + a minimal VisionVerifier (the focus-stealing, dialog/keystroke half). Then FileGateway (analysis + MIDI).
+- **Design specs:** `docs/superpowers/specs/2026-07-08-logic-mcp-design.md` (original architecture),
+  `2026-07-10-ax-mixer-core-design.md` (Phase 2 boundary), `2026-07-13-ax-structural-ops-design.md` (Phase 3).
+- **Read `.superpowers/sdd/HANDOFF.md` first.** It carries current state, the AX pivot, the recurring
+  stale-handle lesson, and known limitations. Per-task history is in `progress.md`; real-Logic ground truth
+  (the `AXSetValue` ±1-nudge, slider ranges, off-screen degradation, the two search popups, the plugin-window
+  layout) is in `ax-findings.md`. (All three live under `.superpowers/sdd/` and are gitignored — local only.)
+- **Phases 1–3 are SHIPPED to `main`; Phase 3 is LIVE-VERIFIED end-to-end** — the full `smoke --structure`
+  passes (create_track → set_output → insert_plugin → undo×N → net-zero, focus never stolen), **198 tests green.**
+  Phase 1 = MCUBridge; Phase 2 = AX Mixer Core; Phase 3 = AX Structural Ops (+ five 2026-07-15 fix PRs #3–#7).
+- **THE PIVOT:** Logic 12.3's mixer is fully **Accessibility-addressable AND AX writes land with Logic in the
+  BACKGROUND** (no focus stolen). **AX is the primary no-focus read/write + self-verification path** for the
+  mixer and structural ops; MCU is retained for transport, metering, and as a no-Accessibility fallback.
+- **THE recurring bug class:** after ANY structural mutation, a handle/read captured beforehand is STALE
+  (Logic re-renders strips; routing to a fresh bus inserts an Aux and shifts indices). ALWAYS re-resolve BY
+  NAME (a fresh mixer walk) + settle-poll; never trust an AX return code across a mutation. Search-driven
+  popups (insert_plugin, set_output) attach as a SIBLING of the strips and carry an `AXSearchField` —
+  `AXSetValue` on it filters with no keystrokes; then pick the EXACT case-insensitive title match.
+- **KEY real-Logic fact:** `AXUIElementSetAttributeValue` on Logic sliders **nudges ±1 toward the target, it
+  does NOT set absolutely.** Value writes CONVERGE by repeated nudging (`AXBridge.nudgeToRaw` for pan/plugins;
+  `axConvergeVolume` for volume via the dB title). Do not "fix" this into a single set.
+- **AX cannot set Logic's track SELECTION** (`Fixtures/ax/selection.txt`). So `delete_track` is DISABLED (would
+  delete the wrong track), `rename_track`/`checkpoint` are deferred, `select_track` was REMOVED, and `set_send`
+  returns a structured "not available via AX" error. All unfixable without focus-stealing CGEvent clicks.
+- **Open limitations (recorded, not bugs):** off-screen strips degrade `output`/`volumeDB` reads (names are
+  fixed via the child name field; output/volume have no alternate AX source — needs a design call:
+  scroll-into-view vs. last-known-good); no timeline/arrange addressing (regions, playhead, locators, MIDI).
+- **NEXT PHASE (not started — needs a brainstorm/design pass):** the **plugin-control tool suite** — operate a
+  plugin's controls, not just insert it: press named buttons (a Compressor circuit model like "Vintage Opto"),
+  select presets/switches (`AXPopUpButton`), correlate ANONYMOUS sliders to their separate label `AXTextField`s,
+  and unit-aware `set_plugin_param` (dB/ms/ratio via captured per-param calibration). Adjacent unphased gaps:
+  instrument-slot loading, and the arrange/timeline bucket (Phase 4a playhead/locators/regions, 4b MIDI).
 
 ## Architecture in one paragraph
 
