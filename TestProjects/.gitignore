@@ -1,0 +1,15 @@
+# Logic Pro regenerates these on open/save — never commit them. Only the canonical
+# ProjectData + MetaData/DisplayState scaffolding belongs in git (see README.md).
+.DS_Store
+._*
+**/Autosave/
+**/Project File Backups/
+**/Undo Data/
+**/Freeze Files/
+**/Bounces/
+**/WindowImage.jpg
+
+# Seed projects stay lightweight and license-clean: no audio/media binaries.
+**/Audio Files/*
+**/Movie Files/*
+**/Sampler Instruments/*
