@@ -183,4 +183,12 @@ final class PluginInsertToolTests: XCTestCase {
         let groups = await d.ax.pluginGroups(strip).map(\.name)
         XCTAssertEqual(groups, ["Compressor"], "the re-found strip carries exactly the inserted group")
     }
+
+    func testConfirmMatchesTruncatedThirdPartyName() {
+        XCTAssertTrue(insertedNameMatches(group: "UAD AKG BX", requested: "UAD AKG BX 20"))
+        XCTAssertTrue(insertedNameMatches(group: "SketchCass", requested: "SketchCassette II"))
+        XCTAssertTrue(insertedNameMatches(group: "Compressor", requested: "Compressor"))
+        XCTAssertFalse(insertedNameMatches(group: "RetroSyn", requested: "UAD AKG BX 20"))
+        XCTAssertFalse(insertedNameMatches(group: "", requested: "Compressor"))
+    }
 }

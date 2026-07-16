@@ -1,5 +1,14 @@
 import MCP
 
+/// Logic truncates a plugin's name in the strip's AXGroup description ("UAD AKG BX 20" → "UAD AKG
+/// BX"), so the insert confirm must not require equality: a non-empty group name that is a
+/// case-insensitive PREFIX of the requested name counts as a match.
+func insertedNameMatches(group: String, requested: String) -> Bool {
+    guard !group.isEmpty else { return false }
+    let g = group.lowercased(), r = requested.lowercased()
+    return g == r || r.hasPrefix(g)
+}
+
 /// Insert an audio plugin via the strip's SEARCH-DRIVEN insert popup (Fixtures/ax/popup_plugin_search.txt):
 /// the popup attaches as a SIBLING of the mixer strips (not under the slot) and carries an
 /// AXSearchField; setting its value filters Logic to a flat match list; each match's submenu holds
@@ -29,9 +38,9 @@ public struct InsertPluginTool: LogicTool {
         // insert that landed. So confirm by RE-RESOLVING the strip by name each poll (a fresh mixer
         // walk), never the pre-insert handle.
         let groups = await settlePluginsByName(daemon, track: track) { names in
-            names.contains { $0.caseInsensitiveCompare(plugin) == .orderedSame }
+            names.contains { insertedNameMatches(group: $0, requested: plugin) }
         }
-        guard groups.contains(where: { $0.caseInsensitiveCompare(plugin) == .orderedSame }) else {
+        guard groups.contains(where: { insertedNameMatches(group: $0, requested: plugin) }) else {
             throw ToolFailure(error: "plugin insert not confirmed", layer: "ax",
                               expected: "'\(plugin)' in the strip's plugin slots",
                               observed: "slots: \(groups.joined(separator: ", "))")
