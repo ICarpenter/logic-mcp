@@ -100,6 +100,10 @@ public actor AXBridge {
     public func control(_ strip: AXHandle, description: String) -> AXHandle? {
         p.children(of: strip).first { p.string(.description, of: $0) == description }
     }
+    /// Test-only: enumerate windows (mirrors the provider) so unit tests can grab a plugin window
+    /// handle without a full Daemon. Safe: read-only.
+    func windowsForTest() -> [AXHandle] { p.windows() }
+    func titleForTest(_ h: AXHandle) -> String? { p.string(.title, of: h) }
     /// Recursive descendant search by role and/or description — used where a control lives
     /// deeper than a strip's immediate children (send groups, plugin windows).
     public func descendant(of h: AXHandle, role: String? = nil, description: String? = nil) -> AXHandle? {
@@ -279,5 +283,35 @@ public actor AXBridge {
         }
         rec(window, 0)
         return out.map { (name: $0.0, handle: $0.1) }
+    }
+
+    /// Walk a Controls-view plugin window's AXTable into typed rows. Returns [] if there is no
+    /// table (an opaque plugin, or a window still in Editor view). Name comes from the cell's
+    /// AXStaticText (trailing ':' trimmed); display from the sibling AXGroup (sliders) or the
+    /// control's own value (toggle/popup).
+    public func controlTable(in window: AXHandle) -> [PluginControl] {
+        guard let table = descendant(of: window, role: "AXTable", description: nil) else { return [] }
+        var out: [PluginControl] = []
+        for row in p.children(of: table) where p.string(.role, of: row) == "AXRow" {
+            guard let cell = p.children(of: row).first(where: { p.string(.role, of: $0) == "AXCell" })
+            else { continue }
+            let kids = p.children(of: cell)
+            guard let label = kids.first(where: { p.string(.role, of: $0) == "AXStaticText" }),
+                  var name = p.string(.value, of: label), !name.isEmpty else { continue }
+            if name.hasSuffix(":") { name.removeLast() }
+            guard let control = kids.first(where: {
+                ["AXSlider", "AXCheckBox", "AXPopUpButton"].contains(p.string(.role, of: $0) ?? "")
+            }) else { continue }
+            let role = p.string(.role, of: control)
+            let kind: PluginControl.Kind = role == "AXPopUpButton" ? .popup
+                : (role == "AXCheckBox" ? .toggle : .slider)
+            let group = kids.first(where: { p.string(.role, of: $0) == "AXGroup" })
+            let display = kind == .slider ? group.flatMap { p.string(.value, of: $0) }
+                                          : p.string(.value, of: control)
+            out.append(PluginControl(index: out.count, name: name, kind: kind, display: display,
+                                     choices: nil, settable: p.isSettable(control),
+                                     handle: control, displayHandle: kind == .slider ? group : nil))
+        }
+        return out
     }
 }

@@ -187,4 +187,57 @@ final class AXPluginToolTests: XCTestCase {
         XCTAssertNotEqual(gain1.numberValue, 240, "the targeted (first, deduped) slider must have moved")
         XCTAssertEqual(gain2.numberValue, 240, "a later duplicate-named slider must NOT be touched")
     }
+
+    /// A Controls-view window: one AXTable of rows, each a cell of [label, display group, control].
+    /// Mirrors Fixtures/ax/plugin_controls_*.txt.
+    private func controlsWindow(track: String) -> (window: FakeAXNode, rows: [FakeAXNode]) {
+        func row(_ label: String, _ display: String, _ control: FakeAXNode) -> FakeAXNode {
+            let cell = FakeAXNode(role: "AXCell", children: [
+                FakeAXNode(role: "AXStaticText", stringValue: label),
+                FakeAXNode(role: "AXGroup", stringValue: display),
+                control,
+            ])
+            return FakeAXNode(role: "AXRow", subrole: "AXTableRow", children: [cell])
+        }
+        let bass  = FakeAXNode(role: "AXSlider", value: 5000, settable: true, minValue: 0, maxValue: 10000)
+        let type  = FakeAXNode(role: "AXPopUpButton", stringValue: "Standard")
+        let direct = FakeAXNode(role: "AXCheckBox", stringValue: "0", settable: true)
+        let rows = [row("Bass:", "0.00", bass), row("Tape Type:", "Standard", type),
+                    row("Direct:", "", direct)]
+        let table = FakeAXNode(role: "AXTable", children: rows)
+        let viewBtn = FakeAXNode(role: "AXMenuButton", description: "view", title: "Controls")
+        let window = FakeAXNode(role: "AXWindow", title: track, children: [
+            FakeAXNode(role: "AXButton", description: "close"), viewBtn,
+            FakeAXNode(role: "AXScrollArea", children: [table]),
+        ])
+        return (window, rows)
+    }
+
+    func testControlTableParsesRows() async throws {
+        let (window, _) = controlsWindow(track: "vox")
+        let bridge = AXBridge(provider: FakeAXProvider(root:
+            FakeAXNode(role: "AXApplication", children: [window])))
+        let handle = try await firstWindowHandle(bridge, title: "vox")
+        let controls = await bridge.controlTable(in: handle)
+        XCTAssertEqual(controls.map(\.name), ["Bass", "Tape Type", "Direct"])
+        XCTAssertEqual(controls.map(\.kind), [.slider, .popup, .toggle])
+        XCTAssertEqual(controls[0].display, "0.00")
+        XCTAssertTrue(controls[0].settable)
+    }
+
+    /// Proves the real UAD Controls dump parses (third-party coverage).
+    func testControlTableParsesUADFixture() async throws {
+        let bridge = AXBridge(provider: AXFixture.provider("plugin_controls_uad_bx20"))
+        let handle = try await firstWindowHandle(bridge, title: "guitar")
+        let controls = await bridge.controlTable(in: handle)
+        XCTAssertTrue(controls.contains { $0.name == "Dry/Wet" }, "UAD params must be named")
+        XCTAssertTrue(controls.contains { $0.name == "Bass" && $0.kind == .slider })
+    }
+
+    /// Helper: resolve a window handle by title from a bare AXBridge.
+    private func firstWindowHandle(_ bridge: AXBridge, title: String) async throws -> AXHandle {
+        let ws = await bridge.windowsForTest()
+        for w in ws where await bridge.titleForTest(w) == title { return w }
+        throw XCTSkip("no window '\(title)'")
+    }
 }
