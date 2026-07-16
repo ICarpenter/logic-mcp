@@ -225,6 +225,21 @@ final class AXPluginToolTests: XCTestCase {
         XCTAssertTrue(controls[0].settable)
     }
 
+    /// Contract from the brief: `controlTable(in:)` returns [] when the plugin window has NO
+    /// AXTable descendant (an opaque plugin, e.g. a UAD Editor view whose group is AXUnknown, or
+    /// a window still in Editor view). Never fabricate rows for an untabled window.
+    func testControlTableOpaquePluginReturnsEmpty() async throws {
+        let window = FakeAXNode(role: "AXWindow", title: "vox", children: [
+            FakeAXNode(role: "AXButton", description: "close"),
+            FakeAXNode(role: "AXGroup", subrole: "AXUnknown"),
+        ])
+        let bridge = AXBridge(provider: FakeAXProvider(root:
+            FakeAXNode(role: "AXApplication", children: [window])))
+        let handle = try await firstWindowHandle(bridge, title: "vox")
+        let controls = await bridge.controlTable(in: handle)
+        XCTAssertTrue(controls.isEmpty, "an opaque plugin (no AXTable) must yield no rows")
+    }
+
     /// Proves the real UAD Controls dump parses (third-party coverage).
     func testControlTableParsesUADFixture() async throws {
         let bridge = AXBridge(provider: AXFixture.provider("plugin_controls_uad_bx20"))
