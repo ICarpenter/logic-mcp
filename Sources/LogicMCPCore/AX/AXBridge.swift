@@ -273,6 +273,10 @@ public actor AXBridge {
             p.string(.role, of: c) == "AXMenu" ? p.children(of: c) : []
         }
         guard let controls = items.first(where: { p.string(.title, of: $0) == "Controls" }) else {
+            // Dismiss the still-open view AXMenu before throwing — otherwise a failed lookup
+            // leaves Logic's UI with a dangling open menu (same "clean up before throw"
+            // convention as `restorePanBeforeThrow` in PluginTools.swift).
+            try? p.perform(.cancel, on: viewMenu)
             throw ToolFailure(error: "no 'Controls' view for this plugin", layer: "ax",
                               expected: "a 'Controls' menu item", observed:
                                 "available: \(items.compactMap { p.string(.title, of: $0) }.joined(separator: ", "))")
@@ -297,23 +301,6 @@ public actor AXBridge {
             try? await Task.sleep(for: .milliseconds(30))
         }
     }
-    /// The plugin's parameter controls: settable AXSliders only, DEDUPED by description
-    /// (Logic exposes duplicates like "Gain" ×3 — keep the first settable slider per name).
-    public func paramControls(in window: AXHandle) -> [(name: String, handle: AXHandle)] {
-        var out: [(String, AXHandle)] = []
-        var seen = Set<String>()
-        func rec(_ x: AXHandle, _ d: Int) {
-            if d > 12 { return }
-            if p.string(.role, of: x) == "AXSlider", p.isSettable(x),
-               let name = p.string(.description, of: x), !name.isEmpty, !seen.contains(name) {
-                seen.insert(name); out.append((name, x))
-            }
-            for c in p.children(of: x) { rec(c, d + 1) }
-        }
-        rec(window, 0)
-        return out.map { (name: $0.0, handle: $0.1) }
-    }
-
     /// Nudge `slider` until the number parsed from `display`'s value string reaches `target`
     /// (±`tolerance`) or stalls. Assumes the display increases with the raw value (holds for the
     /// stock/third-party params probed 2026-07-15).

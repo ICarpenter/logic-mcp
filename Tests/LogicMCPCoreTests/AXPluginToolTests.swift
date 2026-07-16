@@ -136,6 +136,150 @@ final class AXPluginToolTests: XCTestCase {
         XCTAssertEqual(raw, 2500, accuracy: 1)   // 25 % → raw 2500 (display = raw/100)
     }
 
+    /// Regression for the whole-branch review's index-space mismatch: `get_plugin_params` numbers
+    /// controls over the FULL list (sliders + toggles + popups in tree order), but a sliders-only
+    /// filtered resolution would put a DIFFERENT control at a given integer index than the one just
+    /// advertised — silently targeting the wrong slider while still reporting `verified:true`.
+    /// A Controls window whose rows are [slider "A", toggle "B", slider "C"]: `get_plugin_params`
+    /// would list "C" at index 2, but `sliders` (name-filtered) only has 2 entries ([A, C]) — index
+    /// 2 there is out of range / a different control. `set_plugin_param(param:"2")` must resolve
+    /// against the FULL list and target slider "C".
+    func makeMixedKindProvider() -> (FakeAXProvider, a: FakeAXNode, c: FakeAXNode) {
+        let aGroup = FakeAXNode(role: "AXGroup", stringValue: "0.00")
+        let a = FakeAXNode(role: "AXSlider", value: 0, settable: true, minValue: 0, maxValue: 10)
+        let aCell = FakeAXNode(role: "AXCell", children: [
+            FakeAXNode(role: "AXStaticText", stringValue: "A:"), aGroup, a])
+        let b = FakeAXNode(role: "AXCheckBox", stringValue: "0", settable: true)
+        let bCell = FakeAXNode(role: "AXCell", children: [
+            FakeAXNode(role: "AXStaticText", stringValue: "B:"), b])
+        let cGroup = FakeAXNode(role: "AXGroup", stringValue: "0.00")
+        let c = FakeAXNode(role: "AXSlider", value: 0, settable: true, minValue: 0, maxValue: 10)
+        let cCell = FakeAXNode(role: "AXCell", children: [
+            FakeAXNode(role: "AXStaticText", stringValue: "C:"), cGroup, c])
+        let table = FakeAXNode(role: "AXTable", children: [
+            FakeAXNode(role: "AXRow", subrole: "AXTableRow", children: [aCell]),
+            FakeAXNode(role: "AXRow", subrole: "AXTableRow", children: [bCell]),
+            FakeAXNode(role: "AXRow", subrole: "AXTableRow", children: [cCell]),
+        ])
+        let viewBtn = FakeAXNode(role: "AXMenuButton", description: "view", title: "Controls")
+        let close = FakeAXNode(role: "AXButton", description: "close")
+        let window = FakeAXNode(role: "AXWindow", title: "vox", children: [
+            close, viewBtn, FakeAXNode(role: "AXScrollArea", children: [table])])
+        close.closesWindow = window
+        let open = FakeAXNode(role: "AXButton", description: "open"); open.opensWindow = window
+        let eqGroup = FakeAXNode(role: "AXGroup", description: "Channel EQ", children: [open])
+        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
+            FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute", stringValue: "off"),
+            eqGroup])
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [
+            FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer", children: [area])]))
+        p.nudgeMode = true
+        return (p, a: a, c: c)
+    }
+
+    func testSetPluginParamIntegerIndexUsesFullControlSpace() async throws {
+        let (p, _, c) = makeMixedKindProvider()
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        _ = try await d.axMixer.syncTracks()
+        let r = try await SetPluginParamTool(daemon: d).invoke([
+            "track": .string("vox"), "slot": .int(0), "param": .string("2"), "value": .double(0.5)])
+        guard case .object(let o) = r else { return XCTFail() }
+        XCTAssertEqual(o["param"], .string("C"), "index '2' in the FULL control list is slider C, not sliders[2]")
+        XCTAssertEqual(o["verified"], .bool(true))
+        let raw = try XCTUnwrap(c.numberValue)
+        XCTAssertEqual(raw, 5, accuracy: 1)   // 0.5 normalized over 0…10 → midpoint 5
+    }
+
+    /// Regression for `convergeToDisplay`'s settle-poll guard (`settledValue`): real Logic updates
+    /// a plugin slider's raw AX value ASYNCHRONOUSLY after `AXSetValue` (ax-findings.md) — an
+    /// immediate re-read can return the stale pre-write value, indistinguishable from a genuine
+    /// stuck boundary. `setValueLatency` on the target slider models exactly that: it holds the
+    /// new raw value back for one subsequent `number(of:)` read. Range kept tiny (0…6) so the test
+    /// only pays the guard's 30ms poll a handful of times rather than thousands.
+    /// SUCCESS CRITERION (verified manually per the brief): this test goes RED if the `settledValue`
+    /// poll loop is deleted from `convergeToDisplay`'s stuck-check (an unguarded single read sees
+    /// the stale raw on the very first nudge, misreads it as "stuck", and bails with the display
+    /// still at 1% instead of the 3% target — `verified` becomes false).
+    func testSetPluginParamUnitTargetSettlesAsyncSliderReadback() async throws {
+        let group = FakeAXNode(role: "AXGroup", stringValue: "0 %")
+        let bass  = FakeAXNode(role: "AXSlider", value: 0, settable: true, minValue: 0, maxValue: 6)
+        bass.setValueLatency = 1
+        let cell  = FakeAXNode(role: "AXCell", children: [
+            FakeAXNode(role: "AXStaticText", stringValue: "Bass:"), group, bass])
+        let table = FakeAXNode(role: "AXTable",
+            children: [FakeAXNode(role: "AXRow", subrole: "AXTableRow", children: [cell])])
+        let viewBtn = FakeAXNode(role: "AXMenuButton", description: "view", title: "Controls")
+        let close = FakeAXNode(role: "AXButton", description: "close")
+        let window = FakeAXNode(role: "AXWindow", title: "vox", children: [
+            close, viewBtn, FakeAXNode(role: "AXScrollArea", children: [table])])
+        close.closesWindow = window
+        let open = FakeAXNode(role: "AXButton", description: "open"); open.opensWindow = window
+        let eqGroup = FakeAXNode(role: "AXGroup", description: "Channel EQ", children: [open])
+        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
+            FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute", stringValue: "off"),
+            eqGroup])
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [
+            FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer", children: [area])]))
+        p.nudgeMode = true
+        // Display tracks the raw 1:1 (unlike makeConvergingProvider's /100) so a handful of
+        // nudges is enough to reach the target — keeps the test's real 30ms settle-polls brief.
+        p.onSetNumber = { node, raw in
+            if node === bass { group.stringValue = "\(Int(raw)) %" }
+        }
+
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        _ = try await d.axMixer.syncTracks()
+        let r = try await SetPluginParamTool(daemon: d).invoke([
+            "track": .string("vox"), "slot": .int(0), "param": .string("Bass"), "value": .string("3 %")])
+        guard case .object(let o) = r else { return XCTFail() }
+        XCTAssertEqual(o["verified"], .bool(true))
+        let raw = try XCTUnwrap(bass.numberValue)
+        XCTAssertEqual(raw, 3, accuracy: 1)
+    }
+
+    /// The normalized-0–1 branch (`nudgeToRaw`), distinct from the unit-string `convergeToDisplay`
+    /// path above: a plain JSON number (`.double`, not a string) maps onto the slider's raw range.
+    func testSetPluginParamNormalizedValueConvergesToRawMidpoint() async throws {
+        let (p, bass) = makeConvergingProvider()   // minMax 0…10000
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        _ = try await d.axMixer.syncTracks()
+        let r = try await SetPluginParamTool(daemon: d).invoke([
+            "track": .string("vox"), "slot": .int(0), "param": .string("Bass"), "value": .double(0.5)])
+        guard case .object(let o) = r else { return XCTFail() }
+        XCTAssertEqual(o["verified"], .bool(true))
+        let raw = try XCTUnwrap(bass.numberValue)
+        XCTAssertEqual(raw, 5000, accuracy: 1)   // 0.5 normalized over 0…10000 → midpoint 5000
+    }
+
+    /// An opaque plugin (no Controls-view AXTable) must throw a clear, spec-matching error rather
+    /// than falling through to the generic "no parameter" message meant for a real miss.
+    func testSetPluginParamOpaquePluginThrowsAddressableParamsError() async throws {
+        let viewBtn = FakeAXNode(role: "AXMenuButton", description: "view", title: "Controls")
+        let close = FakeAXNode(role: "AXButton", description: "close")
+        let window = FakeAXNode(role: "AXWindow", title: "vox", children: [
+            close, viewBtn, FakeAXNode(role: "AXGroup", subrole: "AXUnknown", title: "OpaqueAU")])
+        close.closesWindow = window
+        let open = FakeAXNode(role: "AXButton", description: "open"); open.opensWindow = window
+        let g = FakeAXNode(role: "AXGroup", description: "SomeThirdPartyAU", children: [open])
+        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
+            FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute", stringValue: "off"), g])
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [
+            FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer", children: [area])]))
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        _ = try await d.axMixer.syncTracks()
+        do {
+            _ = try await SetPluginParamTool(daemon: d).invoke([
+                "track": .string("vox"), "slot": .int(0), "param": .string("Gain"), "value": .double(0.5)])
+            XCTFail("expected an opaque-plugin ToolFailure")
+        } catch let f as ToolFailure {
+            XCTAssertEqual(f.error, "plugin exposes no addressable parameters")
+            XCTAssertEqual(f.observed, "opaque plugin")
+        }
+    }
+
     func testSetPluginParamNegativeIndexDoesNotCrash() async throws {  // keep — adapted to new provider
         let (p, _) = makeConvergingProvider()
         let d = await Daemon(wire: InMemoryWire(), axProvider: p)

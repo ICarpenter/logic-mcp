@@ -163,10 +163,21 @@ public struct SetPluginParamTool: LogicTool {
         guard let paramKey else { throw ToolFailure(error: "missing required argument 'param'", layer: "daemon") }
 
         let (name, _, controls) = try await axEnterPluginControls(daemon, trackName: trackName, slot: slot)
+        guard !controls.isEmpty else {
+            throw ToolFailure(error: "plugin exposes no addressable parameters", layer: "ax",
+                              expected: "an addressable Controls-view parameter", observed: "opaque plugin")
+        }
+        // `param` as an integer indexes the FULL control list (sliders + toggles + popups) — the
+        // same space `get_plugin_params` numbers and advertises — never a sliders-only filtered
+        // list, which would put a different control at a given index than the one just listed
+        // (see the whole-branch review: `set_plugin_param(param:"3")` could silently hit the
+        // wrong slider and still report `verified:true`). The resolved control must still be a
+        // slider — an integer index landing on a toggle/popup is "no match", not a silent misuse.
         let sliders = controls.filter { $0.kind == .slider }
         let wanted = paramKey.lowercased()
         let target = sliders.first { $0.name.lowercased().hasPrefix(wanted) }
-            ?? Int(paramKey).flatMap { i in (0..<sliders.count).contains(i) ? sliders[i] : nil }
+            ?? Int(paramKey).flatMap { i in (0..<controls.count).contains(i) ? controls[i] : nil }
+                .flatMap { $0.kind == .slider ? $0 : nil }
         guard let target else {
             throw ToolFailure(error: "no parameter '\(paramKey)'", layer: "ax",
                               expected: sliders.map(\.name).joined(separator: ", "), observed: "no match")
