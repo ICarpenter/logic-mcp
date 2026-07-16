@@ -12,7 +12,9 @@ final class AXPluginToolTests: XCTestCase {
         let freq = FakeAXNode(role: "AXSlider", description: "Peak 1 Frequency", title: "1000 Hz",
                               value: 250, settable: true, minValue: 0, maxValue: 1050)
         let pluginWindow = FakeAXNode(role: "AXWindow", title: "vox", children: [
-            FakeAXNode(role: "AXButton", description: "close"), gain, freq,
+            FakeAXNode(role: "AXButton", description: "close"),
+            FakeAXNode(role: "AXMenuButton", description: "view", title: "Editor"),
+            gain, freq,
         ])
         // Strip carries a plugin GROUP "Channel EQ" with an "open" child (slot 0).
         let eqGroup = FakeAXNode(role: "AXGroup", description: "Channel EQ", children: [
@@ -40,13 +42,17 @@ final class AXPluginToolTests: XCTestCase {
         let eqGain = FakeAXNode(role: "AXSlider", description: "Gain", title: "0.0 dB",
                                 value: 240, settable: true, minValue: 0, maxValue: 480)
         let eqClose = FakeAXNode(role: "AXButton", description: "close")
-        let eqWindow = FakeAXNode(role: "AXWindow", title: "vox", children: [eqClose, eqGain])
+        let eqWindow = FakeAXNode(role: "AXWindow", title: "vox", children: [
+            eqClose, FakeAXNode(role: "AXMenuButton", description: "view", title: "Editor"), eqGain,
+        ])
         eqClose.closesWindow = eqWindow
 
         let compThreshold = FakeAXNode(role: "AXSlider", description: "Threshold", title: "-20 dB",
                                        value: 100, settable: true, minValue: 0, maxValue: 200)
         let compClose = FakeAXNode(role: "AXButton", description: "close")
-        let compWindow = FakeAXNode(role: "AXWindow", title: "vox", children: [compClose, compThreshold])
+        let compWindow = FakeAXNode(role: "AXWindow", title: "vox", children: [
+            compClose, FakeAXNode(role: "AXMenuButton", description: "view", title: "Editor"), compThreshold,
+        ])
         compClose.closesWindow = compWindow
 
         let eqOpen = FakeAXNode(role: "AXButton", description: "open")
@@ -125,7 +131,9 @@ final class AXPluginToolTests: XCTestCase {
         let meter = FakeAXNode(role: "AXSlider", description: "Input Level", title: "-inf",
                                value: 0, settable: false)
         let pluginWindow = FakeAXNode(role: "AXWindow", title: "vox", children: [
-            FakeAXNode(role: "AXButton", description: "close"), meter,
+            FakeAXNode(role: "AXButton", description: "close"),
+            FakeAXNode(role: "AXMenuButton", description: "view", title: "Editor"),
+            meter,
         ])
         let opaqueGroup = FakeAXNode(role: "AXGroup", description: "SomeThirdPartyAU", children: [
             FakeAXNode(role: "AXButton", description: "open"),
@@ -160,7 +168,9 @@ final class AXPluginToolTests: XCTestCase {
         let gain2 = FakeAXNode(role: "AXSlider", description: "Gain", title: "0.0 dB",
                                value: 240, settable: true, minValue: 0, maxValue: 480)
         let pluginWindow = FakeAXNode(role: "AXWindow", title: "vox", children: [
-            FakeAXNode(role: "AXButton", description: "close"), gain1, gainIndicator, gain2,
+            FakeAXNode(role: "AXButton", description: "close"),
+            FakeAXNode(role: "AXMenuButton", description: "view", title: "Editor"),
+            gain1, gainIndicator, gain2,
         ])
         let eqGroup = FakeAXNode(role: "AXGroup", description: "Channel EQ", children: [
             FakeAXNode(role: "AXButton", description: "open"),

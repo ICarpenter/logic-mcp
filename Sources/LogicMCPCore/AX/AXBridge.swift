@@ -104,6 +104,9 @@ public actor AXBridge {
     /// handle without a full Daemon. Safe: read-only.
     func windowsForTest() -> [AXHandle] { p.windows() }
     func titleForTest(_ h: AXHandle) -> String? { p.string(.title, of: h) }
+    func titleForViewMenuTest(_ window: AXHandle) -> String? {
+        descendant(of: window, role: "AXMenuButton", description: "view").flatMap { p.string(.title, of: $0) }
+    }
     /// Recursive descendant search by role and/or description — used where a control lives
     /// deeper than a strip's immediate children (send groups, plugin windows).
     public func descendant(of h: AXHandle, role: String? = nil, description: String? = nil) -> AXHandle? {
@@ -242,14 +245,40 @@ public actor AXBridge {
             return (name, g)
         }
     }
-    /// A plugin window is an AXWindow whose title is the TRACK name and which contains
-    /// parameter sliders (distinguishes it from the mixer window, also track-titled sometimes).
+    /// A plugin window is an AXWindow whose title is the TRACK name and which has both a `close`
+    /// button and a `view` menu (distinguishes it from the mixer window, also track-titled
+    /// sometimes). NOT an `AXSlider` requirement — opaque plugins (Editor view with no exposed
+    /// sliders) have none, and would otherwise go undetected (see
+    /// `testPluginWindowDetectsOpaqueWindow`).
     public func pluginWindow(track: String) -> AXHandle? {
         p.windows().first {
             (p.string(.title, of: $0) ?? "") == track
-                && descendant(of: $0, role: "AXSlider", description: nil) != nil
                 && descendant(of: $0, role: nil, description: "close") != nil
+                && descendant(of: $0, role: "AXMenuButton", description: "view") != nil
         }
+    }
+
+    /// Switch a plugin window to Logic's generic "Controls" view. No-op if already there. The
+    /// `view` control is an AXMenuButton (description="view"); its title reflects the current view.
+    /// close-then-open reverts to Editor, so tools call this on every open before reading the table.
+    public func switchToControlsView(_ window: AXHandle) async throws {
+        guard let viewMenu = descendant(of: window, role: "AXMenuButton", description: "view") else {
+            throw ToolFailure(error: "no view switcher on this plugin window", layer: "ax",
+                              expected: "an AXMenuButton description=\"view\"", observed: "none")
+        }
+        if p.string(.title, of: viewMenu) == "Controls" { return }
+        try? p.perform(.press, on: viewMenu)                 // open the menu
+        try? await Task.sleep(for: .milliseconds(40))
+        let items = p.children(of: viewMenu).flatMap { c -> [AXHandle] in
+            p.string(.role, of: c) == "AXMenu" ? p.children(of: c) : []
+        }
+        guard let controls = items.first(where: { p.string(.title, of: $0) == "Controls" }) else {
+            throw ToolFailure(error: "no 'Controls' view for this plugin", layer: "ax",
+                              expected: "a 'Controls' menu item", observed:
+                                "available: \(items.compactMap { p.string(.title, of: $0) }.joined(separator: ", "))")
+        }
+        try p.perform(.press, on: controls)
+        try? await Task.sleep(for: .milliseconds(40))
     }
 
     /// Close every currently-open plugin window for `track`, so a following open deterministically
