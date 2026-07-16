@@ -10,8 +10,8 @@ import MCP
 // plugin — including fabricating params for an empty slot instead of throwing.
 //
 // This code is kept for historical reference only. Nothing in this file calls it anymore;
-// `GetPluginParamsTool`/`SetPluginParamTool` below go through `axEnterPlugin`, which never
-// selects a track, never touches the MCU wire, and cannot race.
+// `GetPluginParamsTool`/`SetPluginParamTool` below go through `axEnterPluginControls`, which
+// never selects a track, never touches the MCU wire, and cannot race.
 
 struct PluginParamCell: Sendable {
     var index: Int
@@ -97,11 +97,10 @@ func exitPluginEdit(_ daemon: Daemon) async {
 
 // MARK: - AX plugin path (Task 10) — the only path the tools call
 
-/// Open (if needed) the plugin at `slot` on `track` via AX and return the plugin window's
-/// parameter controls. No MCU, no track selection, no wrong-track race. Throws a structured
-/// error if the strip/slot has no addressable plugin window.
-func axEnterPlugin(_ daemon: Daemon, trackName: String, slot: Int) async throws
-    -> (name: String, window: AXHandle, params: [(name: String, handle: AXHandle)]) {
+/// Open the slot's plugin window via AX, switch it to Controls view, and return its parameter
+/// rows. No MCU, no track selection, no wrong-track race. Empty `controls` == opaque plugin.
+func axEnterPluginControls(_ daemon: Daemon, trackName: String, slot: Int) async throws
+    -> (name: String, window: AXHandle, controls: [PluginControl]) {
     let strip = try await daemon.mixerStrip(named: trackName)
     let name = await daemon.ax.read(strip).name
     let groups = await daemon.ax.pluginGroups(strip)
@@ -110,12 +109,8 @@ func axEnterPlugin(_ daemon: Daemon, trackName: String, slot: Int) async throws
                           expected: "one of \(groups.count) plugin slots: \(groups.map(\.name).joined(separator: ", "))",
                           observed: "slot \(slot) out of range")
     }
-    // Close every plugin window already open for this track FIRST, then deterministically open
-    // the REQUESTED slot. `pluginWindow(track:)` matches only on window TITLE == track name, so
-    // leaving another slot's window open (e.g. from a prior get_plugin_params call) made this
-    // return the WRONG slot's params — confirmed live: get_plugin_params(slot:1) returned slot
-    // 0's Channel EQ because slot 0's window was still up. Unconditional close-then-open removes
-    // the ambiguity: after this, at most one plugin window for `name` can exist.
+    // Close every open window for this track first (windows key only on track title), then open
+    // the REQUESTED slot deterministically — same discipline as before.
     await daemon.ax.closePluginWindows(track: name)
     if let openBtn = await daemon.ax.descendant(of: groups[slot].group, role: "AXButton", description: "open") {
         try? await daemon.ax.press(openBtn)
@@ -124,91 +119,106 @@ func axEnterPlugin(_ daemon: Daemon, trackName: String, slot: Int) async throws
         throw ToolFailure(error: "could not open plugin '\(groups[slot].name)' on '\(name)'", layer: "ax",
                           expected: "an open plugin window titled '\(name)'", observed: "no plugin window")
     }
-    let params = await daemon.ax.paramControls(in: window)
-    guard !params.isEmpty else {
-        throw ToolFailure(error: "plugin parameters not accessible via AX", layer: "ax",
-                          expected: "addressable parameter sliders", observed: "opaque plugin view")
-    }
-    return (name, window, params)
+    try await daemon.ax.switchToControlsView(window)
+    let controls = await daemon.ax.controlTable(in: window)
+    return (name, window, controls)
 }
 
 public struct GetPluginParamsTool: LogicTool {
     public let name = "get_plugin_params"
-    public let description = "List a plugin's parameters (names and displayed values), read via Accessibility from the plugin's own window. slot is the 0-based index into the strip's plugin groups (Channel EQ, inserts...) in tree order."
+    public let description = "List a plugin's parameters (names, kinds, displayed values) from Logic's generic Controls view, read via Accessibility. Works for Apple and third-party plugins. slot is the 0-based index into the strip's plugin groups in tree order. 'opaque':true means the plugin exposes no addressable parameters."
     public let inputSchema = trackArgSchema(["slot": .object(["type": .string("integer")])], required: ["slot"])
     let daemon: Daemon
     public func invoke(_ args: [String: Value]) async throws -> Value {
         let trackName = try requireString(args, "track", tool: name)
-        guard let slot = args["slot"]?.coercedInt, (0...7).contains(slot) else {
-            throw ToolFailure(error: "'slot' must be an integer in 0…7", layer: "daemon")
+        guard let slot = args["slot"]?.coercedInt, (0...127).contains(slot) else {
+            throw ToolFailure(error: "'slot' must be an integer in 0…127", layer: "daemon")
         }
-        let (name, _, params) = try await axEnterPlugin(daemon, trackName: trackName, slot: slot)
-        var out: [Value] = []
-        for (i, param) in params.enumerated() {
-            // `??` chains its RHS as a non-async autoclosure, so each side must be awaited
-            // into a local binding first — an inline `await` inside `??` fails to compile.
-            let title = await daemon.ax.stringValue(.title, of: param.handle)
-            let numeric = await daemon.ax.value(of: param.handle)
-            let display = title ?? numeric.map { String($0) } ?? ""
-            out.append(.object(["index": .int(i), "name": .string(param.name), "display": .string(display)]))
+        let (name, _, controls) = try await axEnterPluginControls(daemon, trackName: trackName, slot: slot)
+        let params: [Value] = controls.map { c in
+            .object(["index": .int(c.index), "name": .string(c.name), "kind": .string(c.kind.rawValue),
+                     "display": .string(c.display ?? ""), "settable": .bool(c.settable)])
         }
-        return .object(["track": .string(name), "slot": .int(slot), "params": .array(out)])
+        return .object(["track": .string(name), "slot": .int(slot),
+                        "opaque": .bool(controls.isEmpty), "params": .array(params)])
     }
 }
 
 public struct SetPluginParamTool: LogicTool {
     public let name = "set_plugin_param"
-    public let description = "Set one plugin parameter, converged via Accessibility on the plugin's own window. param: parameter name (prefix ok) or integer index from get_plugin_params. value: normalized 0.0-1.0, mapped onto the control's real engineering range. Returns the display string Logic echoed."
+    public let description = "Set one plugin parameter via Logic's Controls view, verified against the parameter's displayed value. 'param': name (prefix ok) or integer index from get_plugin_params. 'value': a normalized number 0.0–1.0, OR a string with units matching the display (e.g. '-6 dB', '25 %'). Returns the display string Logic echoed and whether it verified."
     public let inputSchema = trackArgSchema([
         "slot": .object(["type": .string("integer")]),
         "param": .object(["type": .string("string"), "description": .string("Parameter name (prefix ok) or integer index")]),
-        "value": .object(["type": .string("number"), "minimum": .int(0), "maximum": .int(1)]),
+        "value": .object(["description": .string("Normalized 0–1 number, or a unit string like '-6 dB'")]),
     ], required: ["slot", "param", "value"])
     let daemon: Daemon
 
     public func invoke(_ args: [String: Value]) async throws -> Value {
         let trackName = try requireString(args, "track", tool: name)
-        guard let slot = args["slot"]?.coercedInt, (0...7).contains(slot) else {
-            throw ToolFailure(error: "'slot' must be an integer in 0…7", layer: "daemon")
+        guard let slot = args["slot"]?.coercedInt, (0...127).contains(slot) else {
+            throw ToolFailure(error: "'slot' must be an integer in 0…127", layer: "daemon")
         }
         let paramKey = args["param"]?.stringValue ?? args["param"]?.coercedInt.map(String.init)
-        guard let paramKey else {
-            throw ToolFailure(error: "missing required argument 'param'", layer: "daemon")
-        }
-        guard let value = args["value"]?.coercedDouble, (0.0...1.0).contains(value) else {
-            throw ToolFailure(error: "'value' must be a number in 0.0…1.0", layer: "daemon")
-        }
+        guard let paramKey else { throw ToolFailure(error: "missing required argument 'param'", layer: "daemon") }
 
-        let (name, _, params) = try await axEnterPlugin(daemon, trackName: trackName, slot: slot)
+        let (name, _, controls) = try await axEnterPluginControls(daemon, trackName: trackName, slot: slot)
+        guard !controls.isEmpty else {
+            throw ToolFailure(error: "plugin exposes no addressable parameters", layer: "ax",
+                              expected: "an addressable Controls-view parameter", observed: "opaque plugin")
+        }
+        // `param` as an integer indexes the FULL control list (sliders + toggles + popups) — the
+        // same space `get_plugin_params` numbers and advertises — never a sliders-only filtered
+        // list, which would put a different control at a given index than the one just listed
+        // (see the whole-branch review: `set_plugin_param(param:"3")` could silently hit the
+        // wrong slider and still report `verified:true`). The resolved control must still be a
+        // slider — an integer index landing on a toggle/popup is "no match", not a silent misuse.
+        let sliders = controls.filter { $0.kind == .slider }
         let wanted = paramKey.lowercased()
-        let target = params.first { $0.name.lowercased().hasPrefix(wanted) }
-            // Bounds-checked both ways: `Int("-1")` must fall through to the "no match"
-            // error below, never trap on a negative array subscript.
-            ?? Int(paramKey).flatMap { i in (0..<params.count).contains(i) ? params[i] : nil }
+        let target = sliders.first { $0.name.lowercased().hasPrefix(wanted) }
+            ?? Int(paramKey).flatMap { i in (0..<controls.count).contains(i) ? controls[i] : nil }
+                .flatMap { $0.kind == .slider ? $0 : nil }
         guard let target else {
             throw ToolFailure(error: "no parameter '\(paramKey)'", layer: "ax",
-                              expected: params.map(\.name).joined(separator: ", "), observed: "no match")
+                              expected: sliders.map(\.name).joined(separator: ", "), observed: "no match")
         }
-        guard await daemon.ax.isSettable(target.handle) else {
-            throw ToolFailure(error: "parameter '\(target.name)' not settable via AX", layer: "ax",
-                              expected: "a settable control", observed: "read-only")
+        guard target.settable, let displayHandle = target.displayHandle else {
+            throw ToolFailure(error: "parameter '\(target.name)' is not a settable slider", layer: "ax",
+                              expected: "a settable slider with a display", observed: "not settable")
         }
-        // Param values are raw engineering units in [min,max]; the contract's `value` is 0…1.
-        // Map, then converge by nudging (AXSetValue moves ±1 per call — ax-findings.md).
-        let (loOpt, hiOpt) = await daemon.ax.minMax(of: target.handle)
-        guard let lo = loOpt, let hi = hiOpt, hi > lo else {
+
+        // Both convergence paths nudge ±1 raw unit per AXSetValue call (ax-findings.md), so the
+        // step budget must scale with the slider's actual raw range — a flat cap (e.g. 600)
+        // can't reach a far target on a wide-range slider (a 0…10000 raw Bass % control needs up
+        // to 10000 nudges to traverse end to end).
+        let (loO, hiO) = await daemon.ax.minMax(of: target.handle)
+        guard let lo = loO, let hi = hiO, hi > lo else {
             throw ToolFailure(error: "parameter '\(target.name)' has no readable range", layer: "ax",
-                              expected: "AXMinValue/AXMaxValue on the slider", observed: "missing range")
+                              expected: "AXMinValue/AXMaxValue", observed: "missing range")
         }
-        let rawTarget = lo + value * (hi - lo)
         let steps = Int((hi - lo).rounded(.up)) + 2
-        _ = try await daemon.ax.nudgeToRaw(target.handle, target: rawTarget, maxSteps: steps)
-        let title = await daemon.ax.stringValue(.title, of: target.handle)
-        let numeric = await daemon.ax.value(of: target.handle)
-        let display = title ?? numeric.map { String($0) } ?? ""
+
+        var verified = false
+        if let unitStr = args["value"]?.stringValue, PluginDisplay.parse(unitStr).number != nil {
+            // Unit target: converge against the display-string oracle.
+            let goal = PluginDisplay.parse(unitStr).number!
+            let achieved = try await daemon.ax.convergeToDisplay(
+                slider: target.handle, display: displayHandle, target: goal, tolerance: 0.5, maxSteps: steps)
+            verified = achieved.map { abs($0 - goal) <= 0.5 } ?? false
+        } else if let norm = args["value"]?.coercedDouble, (0.0...1.0).contains(norm) {
+            // Normalized target: map onto the slider's raw range and nudge there.
+            let rawTarget = lo + norm * (hi - lo)
+            let achieved = try await daemon.ax.nudgeToRaw(target.handle, target: rawTarget, maxSteps: steps)
+            verified = abs(achieved - rawTarget) <= 1
+        } else {
+            throw ToolFailure(error: "'value' must be a 0.0–1.0 number or a unit string like '-6 dB'",
+                              layer: "daemon")
+        }
+
+        let display = await daemon.ax.stringValue(.value, of: displayHandle) ?? ""
         await daemon.journal.record(MixMutation(
             tool: "set_plugin_param", track: name, undoArguments: nil,
             descriptionText: "\(name) \(target.name) → \(display)"))
-        return .object(["param": .string(target.name), "display": .string(display)])
+        return .object(["param": .string(target.name), "display": .string(display), "verified": .bool(verified)])
     }
 }

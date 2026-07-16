@@ -75,8 +75,27 @@ FakeLogic to match the transcript and re-run the suite.
 ## Log
 | Date | Logic version | Result | Notes |
 |------|---------------|--------|-------|
+| 2026-07-16 | 12.3 (mcp_test) | **Read path PASS · Write path FAIL** | `get_plugin_params` (Controls view) fully works, no-focus held; `set_plugin_param` drives sliders to the RAIL. Actuation model wrong for Controls-view sliders — write path needs a rework next phase. Detail below. |
 | 2026-07-11 | 12.3 (mcp_test, 20 strips) | AX smoke PASS (3 bugs found+fixed live) | Ran via `logic-mcp smoke` (drives the real AX tools, Logic backgrounded). See detail below. |
 | 2026-07-09 | (mcp_test, 20 strips) | 9 pass / 3 fail / 1 caveat | Items 1-6, 8, 9, 13 pass. 7 + 10 + 11 FAIL (assignment-view race). 12 passes once, then acts as redo. |
+
+### 2026-07-16 Phase 4 Plan 1 (Controls-view engine) smoke detail (Logic 12.3, branch `feat/plugin-control-core`)
+
+Manual smoke of the plugin-control **read** and **write** tools on `vox`'s stock **Channel EQ**, Logic backgrounded (iTerm2 frontmost throughout).
+
+**READ PATH — production-ready.**
+- `get_plugin_params(vox, slot 0)` returned **all 44 Channel EQ controls** via Logic's generic Controls view: sliders (`Low Shelf Gain` = `0.0 dB`, `Peak 1 Frequency` = `100 Hz`), toggles (`Low Cut On/Off`), and popups (`Low Cut Slope` = `12 dB/Oct`) — every one **named, typed, and unit-valued**, `opaque:false`.
+- **switch-to-Controls timing held** (spec Open-Risk #3): the fixed 40 ms sleeps sufficed here; the table read cleanly on the first try.
+- **NO-FOCUS CONFIRMED** (Open-Risk #3, focus half): opening the plugin window + pressing the `view` AXMenuButton to switch views did **not** bring Logic forward — iTerm2 stayed frontmost. The one genuinely new backgrounded AX interaction is safe.
+
+**WRITE PATH — broken; needs a real-Logic rework (next phase).**
+- `set_plugin_param(vox, 0, "Low Shelf Gain", "-3 dB")` drove the slider to **`+24.0 dB`** (`verified:false`), reproduced **deterministically from a clean 0 dB start**. The normalized path (`value:0.5`) also failed to move it off the rail.
+- **Root cause, decoded from raw values** (`axdump`): the Controls-view Gain slider is raw **0…480, linear, NOT inverted** — `raw 480 = +24 dB` (max), `240 = 0 dB` (center), `0 = −24 dB` (min), i.e. `dB = (raw−240)/10`, range **±24 dB**. So `+24` is simply the **ceiling**: the converger drove the slider to its max. `setNumber(lo=0)` should nudge the raw *down* from 240 toward 0, but the raw climbed 240 → 480.
+- **The ±1-nudge-toward-target model does NOT hold for generic Controls-view Cocoa sliders.** That model (ax-findings.md) was validated on the **mixer volume fader + pan knob** — different controls. `AXSetValue` on the auto-generated Controls-table slider actuates differently (pushes to a rail regardless of target). The converger's **actuation primitive**, not just its direction, is wrong for plugin sliders. It fails *safe* (`verified:false`, no fabricated success), but cannot set a value.
+- **`AXSetValue` on a Controls-view slider does NOT register in Logic's undo history** — so param writes aren't undoable. Cleanup caution: a follow-up `undo_structural` therefore hit the *next* stack item ("Undo Create Track") and removed a track; restore via **File ▸ Revert to Saved** (both the stuck value and the undone track are unsaved in-memory changes).
+- **Toggles report `settable:false`** in Controls view (they're press-only, not `AXSetValue`) — a note for Plan 2's `press_plugin_control`.
+
+**Fix for the next phase (write-path rework):** characterize how a Controls-view slider actually moves under AX — is `AXSetValue(v)` absolute on a different scale? do `AXIncrement`/`AXDecrement` step actions work? is there a fixed step? — then rewrite `AXBridge.convergeToDisplay` to that reality (direction probe at minimum; likely switch actuation to increment/decrement). Until then, **`set_plugin_param` is not trustworthy; `get_plugin_params` is.**
 
 ### 2026-07-11 AX Mixer Core smoke detail (Logic 12.3, branch `feat/ax-mixer-core`)
 Driven by the new `logic-mcp smoke` subcommand (real `Daemon` + `SystemAXProvider`, Logic in the background the whole time).

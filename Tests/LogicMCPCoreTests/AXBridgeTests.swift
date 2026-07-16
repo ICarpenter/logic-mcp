@@ -213,4 +213,37 @@ final class AXBridgeTests: XCTestCase {
         let whileClosed = await bridge.hasMixerWindow()
         XCTAssertFalse(whileClosed, "the Inspector's mini-mixer must NOT count as a Mixer window")
     }
+
+    /// A plugin window that starts in Editor view; pressing view→Controls swaps title to "Controls".
+    func testSwitchToControlsPressesMenuItem() async throws {
+        let controlsItem = FakeAXNode(role: "AXMenuItem", title: "Controls")
+        let editorItem   = FakeAXNode(role: "AXMenuItem", title: "Editor")
+        let menu = FakeAXNode(role: "AXMenu", children: [controlsItem, editorItem])
+        let viewBtn = FakeAXNode(role: "AXMenuButton", description: "view", title: "Editor",
+                                 children: [menu])
+        controlsItem.onPress = { viewBtn.title = "Controls" }   // Logic reflects the choice
+        let window = FakeAXNode(role: "AXWindow", title: "vox", children: [
+            FakeAXNode(role: "AXButton", description: "close"), viewBtn,
+        ])
+        let bridge = AXBridge(provider: FakeAXProvider(root:
+            FakeAXNode(role: "AXApplication", children: [window])))
+        let windows = await bridge.windowsForTest()
+        let h = try XCTUnwrap(windows.first)
+        try await bridge.switchToControlsView(h)
+        let title = await bridge.titleForViewMenuTest(h)
+        XCTAssertEqual(title, "Controls")
+    }
+
+    /// An opaque plugin (no AXSlider anywhere) must still be found as a plugin window.
+    func testPluginWindowDetectsOpaqueWindow() async throws {
+        let window = FakeAXNode(role: "AXWindow", title: "guitar", children: [
+            FakeAXNode(role: "AXButton", description: "close"),
+            FakeAXNode(role: "AXMenuButton", description: "view", title: "Editor"),
+            FakeAXNode(role: "AXGroup", subrole: "AXUnknown", title: "SomeAU"),  // opaque, no slider
+        ])
+        let bridge = AXBridge(provider: FakeAXProvider(root:
+            FakeAXNode(role: "AXApplication", children: [window])))
+        let found = await bridge.pluginWindow(track: "guitar")
+        XCTAssertNotNil(found, "an opaque plugin window (no slider) must still be detected")
+    }
 }

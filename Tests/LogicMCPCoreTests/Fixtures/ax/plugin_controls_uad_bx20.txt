@@ -1,0 +1,64 @@
+# Transcribed 2026-07-16 from a live `axdump` capture (Logic 12.3, mcp_test) of the UAD AKG BX 20
+# plugin on the 'guitar' track, switched to Logic's generic "Controls" view. UAD's custom Editor
+# view is fully opaque (AXGroup subrole="AXUnknown", no addressable controls); the Controls view
+# exposes every AU parameter as a uniform AXTable row: AXStaticText label + AXGroup display + a
+# settable AXSlider/AXCheckBox/AXPopUpButton. Proves the Plan-1 engine reaches third-party
+# (proprietary-UI) plugins. A representative subset of the ~17 rows is transcribed here.
+AXWindow subrole="AXDialog" title="guitar" settable=false
+  AXButton description="close" settable=false
+  AXButton description="toolbar" settable=false
+  AXCheckBox description="link" value="0" settable=false
+  AXMenuButton description="view" title="Controls" settable=false
+  AXButton description="bypass" title=" " settable=false
+  AXCheckBox description="compare" title="Compare" value="0" settable=false
+  AXGroup settable=false
+    AXButton subrole="AXSegment" description="previous" settable=false
+    AXButton subrole="AXSegment" description="next" settable=false
+  AXPopUpButton value="Manual" settable=false
+  AXStaticText value="UAD AKG BX 20" settable=false
+  AXScrollArea settable=false
+    AXTable settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Input Sel:" settable=false
+          AXGroup value="Mono" settable=false
+          AXSlider value="0" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Direct:" settable=false
+          AXCheckBox value="0" settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Low Cut:" settable=false
+          AXGroup value="Off" settable=false
+          AXSlider value="0" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Bass:" settable=false
+          AXGroup value="0.00" settable=false
+          AXSlider value="5000" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Treble:" settable=false
+          AXGroup value="0.00" settable=false
+          AXSlider value="5000" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Dry/Wet:" settable=false
+          AXGroup value="15 %" settable=false
+          AXSlider value="5000" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Predelay:" settable=false
+          AXGroup value="0 ms" settable=false
+          AXSlider value="0" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Ch1 Vol:" settable=false
+          AXGroup value="0.00 dB" settable=false
+          AXSlider value="5000" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Link:" settable=false
+          AXPopUpButton value="On (Base Channel 1)" settable=false
+  AXStaticText value="guitar" settable=false

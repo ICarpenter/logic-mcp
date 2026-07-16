@@ -100,6 +100,13 @@ public actor AXBridge {
     public func control(_ strip: AXHandle, description: String) -> AXHandle? {
         p.children(of: strip).first { p.string(.description, of: $0) == description }
     }
+    /// Test-only: enumerate windows (mirrors the provider) so unit tests can grab a plugin window
+    /// handle without a full Daemon. Safe: read-only.
+    func windowsForTest() -> [AXHandle] { p.windows() }
+    func titleForTest(_ h: AXHandle) -> String? { p.string(.title, of: h) }
+    func titleForViewMenuTest(_ window: AXHandle) -> String? {
+        descendant(of: window, role: "AXMenuButton", description: "view").flatMap { p.string(.title, of: $0) }
+    }
     /// Recursive descendant search by role and/or description — used where a control lives
     /// deeper than a strip's immediate children (send groups, plugin windows).
     public func descendant(of h: AXHandle, role: String? = nil, description: String? = nil) -> AXHandle? {
@@ -238,14 +245,44 @@ public actor AXBridge {
             return (name, g)
         }
     }
-    /// A plugin window is an AXWindow whose title is the TRACK name and which contains
-    /// parameter sliders (distinguishes it from the mixer window, also track-titled sometimes).
+    /// A plugin window is an AXWindow whose title is the TRACK name and which has both a `close`
+    /// button and a `view` menu (distinguishes it from the mixer window, also track-titled
+    /// sometimes). NOT an `AXSlider` requirement — opaque plugins (Editor view with no exposed
+    /// sliders) have none, and would otherwise go undetected (see
+    /// `testPluginWindowDetectsOpaqueWindow`).
     public func pluginWindow(track: String) -> AXHandle? {
         p.windows().first {
             (p.string(.title, of: $0) ?? "") == track
-                && descendant(of: $0, role: "AXSlider", description: nil) != nil
                 && descendant(of: $0, role: nil, description: "close") != nil
+                && descendant(of: $0, role: "AXMenuButton", description: "view") != nil
         }
+    }
+
+    /// Switch a plugin window to Logic's generic "Controls" view. No-op if already there. The
+    /// `view` control is an AXMenuButton (description="view"); its title reflects the current view.
+    /// close-then-open reverts to Editor, so tools call this on every open before reading the table.
+    public func switchToControlsView(_ window: AXHandle) async throws {
+        guard let viewMenu = descendant(of: window, role: "AXMenuButton", description: "view") else {
+            throw ToolFailure(error: "no view switcher on this plugin window", layer: "ax",
+                              expected: "an AXMenuButton description=\"view\"", observed: "none")
+        }
+        if p.string(.title, of: viewMenu) == "Controls" { return }
+        try? p.perform(.press, on: viewMenu)                 // open the menu
+        try? await Task.sleep(for: .milliseconds(40))
+        let items = p.children(of: viewMenu).flatMap { c -> [AXHandle] in
+            p.string(.role, of: c) == "AXMenu" ? p.children(of: c) : []
+        }
+        guard let controls = items.first(where: { p.string(.title, of: $0) == "Controls" }) else {
+            // Dismiss the still-open view AXMenu before throwing — otherwise a failed lookup
+            // leaves Logic's UI with a dangling open menu (same "clean up before throw"
+            // convention as `restorePanBeforeThrow` in PluginTools.swift).
+            try? p.perform(.cancel, on: viewMenu)
+            throw ToolFailure(error: "no 'Controls' view for this plugin", layer: "ax",
+                              expected: "a 'Controls' menu item", observed:
+                                "available: \(items.compactMap { p.string(.title, of: $0) }.joined(separator: ", "))")
+        }
+        try p.perform(.press, on: controls)
+        try? await Task.sleep(for: .milliseconds(40))
     }
 
     /// Close every currently-open plugin window for `track`, so a following open deterministically
@@ -264,20 +301,69 @@ public actor AXBridge {
             try? await Task.sleep(for: .milliseconds(30))
         }
     }
-    /// The plugin's parameter controls: settable AXSliders only, DEDUPED by description
-    /// (Logic exposes duplicates like "Gain" ×3 — keep the first settable slider per name).
-    public func paramControls(in window: AXHandle) -> [(name: String, handle: AXHandle)] {
-        var out: [(String, AXHandle)] = []
-        var seen = Set<String>()
-        func rec(_ x: AXHandle, _ d: Int) {
-            if d > 12 { return }
-            if p.string(.role, of: x) == "AXSlider", p.isSettable(x),
-               let name = p.string(.description, of: x), !name.isEmpty, !seen.contains(name) {
-                seen.insert(name); out.append((name, x))
-            }
-            for c in p.children(of: x) { rec(c, d + 1) }
+    /// Nudge `slider` until the number parsed from `display`'s value string reaches `target`
+    /// (±`tolerance`) or stalls. Assumes the display increases with the raw value (holds for the
+    /// stock/third-party params probed 2026-07-15).
+    ///
+    /// The display is often COARSER than the raw slider (e.g. a 0…10000 raw range showing a
+    /// 0…100 % readout) — each `AXSetValue` nudge moves the RAW value by exactly one unit
+    /// (ax-findings.md), which frequently leaves the DISPLAY STRING unchanged for many
+    /// consecutive nudges. So "stuck" is detected on the RAW value not progressing between
+    /// nudges (a genuine boundary/no-op), never on the display looking unchanged after a single
+    /// nudge — the latter would misfire on the very first step for any coarse display and abort
+    /// before the raw value could travel far enough to move it.
+    ///
+    /// The post-nudge raw read goes through `settledValue` for the SAME reason `nudgeToRaw` and
+    /// `axConvergeVolume` do: `AXUIElementSetAttributeValue` updates a Logic slider ASYNCHRONOUSLY,
+    /// so an immediate re-read can return the STALE pre-write value — indistinguishable from a
+    /// genuine min/max boundary — and bail the loop early with the param stuck partway. `settledValue`
+    /// polls briefly before concluding the raw genuinely didn't move. The display string stays the
+    /// TARGET/convergence oracle. Returns the achieved display number, or nil if it's unreadable.
+    public func convergeToDisplay(slider: AXHandle, display: AXHandle, target: Double,
+                                  tolerance: Double, maxSteps: Int) async throws -> Double? {
+        let (loO, hiO) = minMax(of: slider)
+        guard let lo = loO, let hi = hiO, hi > lo else { return nil }
+        func liveNum() -> Double? { PluginDisplay.parse(p.string(.value, of: display) ?? "").number }
+        guard var cur = liveNum() else { return nil }
+        for _ in 0..<maxSteps {
+            if abs(cur - target) <= tolerance { return cur }
+            let rawBefore = p.number(of: slider)
+            try p.setNumber(cur < target ? hi : lo, of: slider)   // one nudge toward target
+            let settled = await settledValue(of: slider, unlessChangedFrom: rawBefore)
+            if settled == nil || settled == rawBefore { return liveNum() }   // settle-confirmed stuck
+            guard let now = liveNum() else { return nil }
+            cur = now
         }
-        rec(window, 0)
-        return out.map { (name: $0.0, handle: $0.1) }
+        return liveNum()
+    }
+
+    /// Walk a Controls-view plugin window's AXTable into typed rows. Returns [] if there is no
+    /// table (an opaque plugin, or a window still in Editor view). Name comes from the cell's
+    /// AXStaticText (trailing ':' trimmed); display from the sibling AXGroup (sliders) or the
+    /// control's own value (toggle/popup).
+    public func controlTable(in window: AXHandle) -> [PluginControl] {
+        guard let table = descendant(of: window, role: "AXTable", description: nil) else { return [] }
+        var out: [PluginControl] = []
+        for row in p.children(of: table) where p.string(.role, of: row) == "AXRow" {
+            guard let cell = p.children(of: row).first(where: { p.string(.role, of: $0) == "AXCell" })
+            else { continue }
+            let kids = p.children(of: cell)
+            guard let label = kids.first(where: { p.string(.role, of: $0) == "AXStaticText" }),
+                  var name = p.string(.value, of: label), !name.isEmpty else { continue }
+            if name.hasSuffix(":") { name.removeLast() }
+            guard let control = kids.first(where: {
+                ["AXSlider", "AXCheckBox", "AXPopUpButton"].contains(p.string(.role, of: $0) ?? "")
+            }) else { continue }
+            let role = p.string(.role, of: control)
+            let kind: PluginControl.Kind = role == "AXPopUpButton" ? .popup
+                : (role == "AXCheckBox" ? .toggle : .slider)
+            let group = kids.first(where: { p.string(.role, of: $0) == "AXGroup" })
+            let display = kind == .slider ? group.flatMap { p.string(.value, of: $0) }
+                                          : p.string(.value, of: control)
+            out.append(PluginControl(index: out.count, name: name, kind: kind, display: display,
+                                     choices: nil, settable: p.isSettable(control),
+                                     handle: control, displayHandle: kind == .slider ? group : nil))
+        }
+        return out
     }
 }
