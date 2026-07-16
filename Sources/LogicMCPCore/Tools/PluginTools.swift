@@ -132,27 +132,50 @@ func axEnterPlugin(_ daemon: Daemon, trackName: String, slot: Int) async throws
     return (name, window, params)
 }
 
+/// Open the slot's plugin window via AX, switch it to Controls view, and return its parameter
+/// rows. No MCU, no track selection, no wrong-track race. Empty `controls` == opaque plugin.
+func axEnterPluginControls(_ daemon: Daemon, trackName: String, slot: Int) async throws
+    -> (name: String, window: AXHandle, controls: [PluginControl]) {
+    let strip = try await daemon.mixerStrip(named: trackName)
+    let name = await daemon.ax.read(strip).name
+    let groups = await daemon.ax.pluginGroups(strip)
+    guard slot >= 0, slot < groups.count else {
+        throw ToolFailure(error: "no plugin in slot \(slot) on '\(name)'", layer: "ax",
+                          expected: "one of \(groups.count) plugin slots: \(groups.map(\.name).joined(separator: ", "))",
+                          observed: "slot \(slot) out of range")
+    }
+    // Close every open window for this track first (windows key only on track title), then open
+    // the REQUESTED slot deterministically — same discipline as before.
+    await daemon.ax.closePluginWindows(track: name)
+    if let openBtn = await daemon.ax.descendant(of: groups[slot].group, role: "AXButton", description: "open") {
+        try? await daemon.ax.press(openBtn)
+    }
+    guard let window = await daemon.ax.pluginWindow(track: name) else {
+        throw ToolFailure(error: "could not open plugin '\(groups[slot].name)' on '\(name)'", layer: "ax",
+                          expected: "an open plugin window titled '\(name)'", observed: "no plugin window")
+    }
+    try await daemon.ax.switchToControlsView(window)
+    let controls = await daemon.ax.controlTable(in: window)
+    return (name, window, controls)
+}
+
 public struct GetPluginParamsTool: LogicTool {
     public let name = "get_plugin_params"
-    public let description = "List a plugin's parameters (names and displayed values), read via Accessibility from the plugin's own window. slot is the 0-based index into the strip's plugin groups (Channel EQ, inserts...) in tree order."
+    public let description = "List a plugin's parameters (names, kinds, displayed values) from Logic's generic Controls view, read via Accessibility. Works for Apple and third-party plugins. slot is the 0-based index into the strip's plugin groups in tree order. 'opaque':true means the plugin exposes no addressable parameters."
     public let inputSchema = trackArgSchema(["slot": .object(["type": .string("integer")])], required: ["slot"])
     let daemon: Daemon
     public func invoke(_ args: [String: Value]) async throws -> Value {
         let trackName = try requireString(args, "track", tool: name)
-        guard let slot = args["slot"]?.coercedInt, (0...7).contains(slot) else {
-            throw ToolFailure(error: "'slot' must be an integer in 0…7", layer: "daemon")
+        guard let slot = args["slot"]?.coercedInt, (0...127).contains(slot) else {
+            throw ToolFailure(error: "'slot' must be an integer in 0…127", layer: "daemon")
         }
-        let (name, _, params) = try await axEnterPlugin(daemon, trackName: trackName, slot: slot)
-        var out: [Value] = []
-        for (i, param) in params.enumerated() {
-            // `??` chains its RHS as a non-async autoclosure, so each side must be awaited
-            // into a local binding first — an inline `await` inside `??` fails to compile.
-            let title = await daemon.ax.stringValue(.title, of: param.handle)
-            let numeric = await daemon.ax.value(of: param.handle)
-            let display = title ?? numeric.map { String($0) } ?? ""
-            out.append(.object(["index": .int(i), "name": .string(param.name), "display": .string(display)]))
+        let (name, _, controls) = try await axEnterPluginControls(daemon, trackName: trackName, slot: slot)
+        let params: [Value] = controls.map { c in
+            .object(["index": .int(c.index), "name": .string(c.name), "kind": .string(c.kind.rawValue),
+                     "display": .string(c.display ?? ""), "settable": .bool(c.settable)])
         }
-        return .object(["track": .string(name), "slot": .int(slot), "params": .array(out)])
+        return .object(["track": .string(name), "slot": .int(slot),
+                        "opaque": .bool(controls.isEmpty), "params": .array(params)])
     }
 }
 
