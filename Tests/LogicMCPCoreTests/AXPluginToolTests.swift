@@ -39,12 +39,12 @@ final class AXPluginToolTests: XCTestCase {
         XCTAssertEqual(o["opaque"], .bool(false))
     }
 
-    /// Regression guard for the real-Logic smoke bug: `axEnterPlugin` used to open a slot's
-    /// plugin window only if NO plugin window for the track was already up, so with slot 0's
-    /// window left open, `get_plugin_params(slot:1)` silently reused it and returned slot 0's
+    /// Regression guard for the real-Logic smoke bug: the AX plugin-entry path used to open a
+    /// slot's plugin window only if NO plugin window for the track was already up, so with slot
+    /// 0's window left open, `get_plugin_params(slot:1)` silently reused it and returned slot 0's
     /// params. Models two slots whose windows are both titled by the TRACK name (as real Logic
-    /// does) and only materialize on an "open" press; the fix must close slot 0's window before
-    /// opening slot 1's, so slot 1's params are the ones returned.
+    /// does) and only materialize on an "open" press; `axEnterPluginControls` must close slot 0's
+    /// window before opening slot 1's, so slot 1's params are the ones returned.
     func testGetPluginParamsSlot1DoesNotReturnSlot0() async throws {
         func controlsWindow(title: String, label: String) -> FakeAXNode {
             let control = FakeAXNode(role: "AXSlider", value: 240, settable: true, minValue: 0, maxValue: 480)

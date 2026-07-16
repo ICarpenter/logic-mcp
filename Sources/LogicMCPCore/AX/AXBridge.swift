@@ -324,8 +324,14 @@ public actor AXBridge {
     /// consecutive nudges. So "stuck" is detected on the RAW value not progressing between
     /// nudges (a genuine boundary/no-op), never on the display looking unchanged after a single
     /// nudge — the latter would misfire on the very first step for any coarse display and abort
-    /// before the raw value could travel far enough to move it. Returns the achieved display
-    /// number, or nil if the display is unreadable.
+    /// before the raw value could travel far enough to move it.
+    ///
+    /// The post-nudge raw read goes through `settledValue` for the SAME reason `nudgeToRaw` and
+    /// `axConvergeVolume` do: `AXUIElementSetAttributeValue` updates a Logic slider ASYNCHRONOUSLY,
+    /// so an immediate re-read can return the STALE pre-write value — indistinguishable from a
+    /// genuine min/max boundary — and bail the loop early with the param stuck partway. `settledValue`
+    /// polls briefly before concluding the raw genuinely didn't move. The display string stays the
+    /// TARGET/convergence oracle. Returns the achieved display number, or nil if it's unreadable.
     public func convergeToDisplay(slider: AXHandle, display: AXHandle, target: Double,
                                   tolerance: Double, maxSteps: Int) async throws -> Double? {
         let (loO, hiO) = minMax(of: slider)
@@ -336,7 +342,8 @@ public actor AXBridge {
             if abs(cur - target) <= tolerance { return cur }
             let rawBefore = p.number(of: slider)
             try p.setNumber(cur < target ? hi : lo, of: slider)   // one nudge toward target
-            if p.number(of: slider) == rawBefore { return liveNum() }   // stuck: raw didn't move
+            let settled = await settledValue(of: slider, unlessChangedFrom: rawBefore)
+            if settled == nil || settled == rawBefore { return liveNum() }   // settle-confirmed stuck
             guard let now = liveNum() else { return nil }
             cur = now
         }
