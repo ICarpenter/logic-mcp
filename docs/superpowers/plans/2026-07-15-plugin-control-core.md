@@ -474,15 +474,34 @@ Replace the body of `pluginWindow(track:)` (currently requires an `AXSlider`) wi
     }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 4: Keep the still-Editor plugin-tool tests green (cross-task fix)**
+
+The new `pluginWindow(track:)` now requires a `view` AXMenuButton. The existing Editor-shape plugin
+windows in `Tests/LogicMCPCoreTests/AXPluginToolTests.swift` — the one built by `makeProvider()`, and
+the per-slot windows in `testGetPluginParamsSlot1DoesNotReturnSlot0` and
+`testGetPluginParamsOpaquePluginReturnsStructuredError` — have a `close` button and sliders but **no
+`view` menu**, so `pluginWindow` (called via `axEnterPlugin`, which the get/set tools still use until
+Task 4) will stop detecting them and those tests will fail. To each of those `AXWindow` fakes, add a
+`view` menu child so detection still succeeds (they remain Editor-path tests until Task 4):
+
+```swift
+        FakeAXNode(role: "AXMenuButton", description: "view", title: "Editor"),
+```
+
+(The Task-2 windows that call `controlTable` directly — `controlsWindow`, the UAD fixture, the opaque
+`testControlTableOpaquePluginReturnsEmpty` window — do NOT go through `pluginWindow`, so leave them.)
+
+- [ ] **Step 5: Run tests to verify they pass**
 
 Run: `pkill -f xctest 2>/dev/null; perl -e 'alarm 600; exec @ARGV' swift test --filter AXBridgeTests`
-Expected: PASS (both new tests, plus existing AXBridge tests still green).
+then the FULL suite: `pkill -f xctest 2>/dev/null; perl -e 'alarm 600; exec @ARGV' swift test`
+Expected: both new AXBridge tests pass, and the full suite is green (no AXPluginToolTests regressions
+from the `pluginWindow` change).
 
-- [ ] **Step 5: Stage + request review**
+- [ ] **Step 6: Stage + request review**
 
 ```bash
-git add Sources/LogicMCPCore/AX/AXBridge.swift Tests/LogicMCPCoreTests/AXBridgeTests.swift
+git add Sources/LogicMCPCore/AX/AXBridge.swift Tests/LogicMCPCoreTests/AXBridgeTests.swift Tests/LogicMCPCoreTests/AXPluginToolTests.swift
 git commit -m "<conventional message for this task>"
 ```
 Committed on `feat/plugin-control-core` (do not merge to main).
