@@ -117,7 +117,7 @@ final class AXPluginToolTests: XCTestCase {
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
         let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [
             FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer", children: [area])]))
-        p.nudgeMode = true
+        p.nudgeMode = false   // Task 0 default: AXSetValue is absolute on Controls-view sliders
         p.onSetNumber = { node, raw in
             if node === bass { group.stringValue = "\(Int(raw / 100)) %" }   // display follows raw
         }
@@ -174,7 +174,7 @@ final class AXPluginToolTests: XCTestCase {
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
         let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [
             FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer", children: [area])]))
-        p.nudgeMode = true
+        p.nudgeMode = false   // Task 0 default: AXSetValue is absolute on Controls-view sliders
         return (p, a: a, c: c)
     }
 
@@ -191,14 +191,31 @@ final class AXPluginToolTests: XCTestCase {
         XCTAssertEqual(raw, 5, accuracy: 1)   // 0.5 normalized over 0…10 → midpoint 5
     }
 
-    /// Regression for `convergeToDisplay`'s settle-poll guard (`settledValue`): real Logic updates
-    /// a plugin slider's raw AX value ASYNCHRONOUSLY after `AXSetValue` (ax-findings.md) — an
-    /// immediate re-read can return the stale pre-write value, indistinguishable from a genuine
-    /// stuck boundary. `setValueLatency` on the target slider models exactly that: it holds the
-    /// new raw value back for one subsequent `number(of:)` read. Range kept tiny (0…6) so the test
-    /// only pays the guard's 30ms poll a handful of times rather than thousands.
+    /// set_plugin_param must REFUSE a param that resolves to a non-slider (a toggle/popup), pointing
+    /// the caller at the right tool — never silently mis-actuate.
+    func testSetPluginParamRejectsToggleKind() async throws {
+        let (p, _, _) = makeMixedKindProvider()          // rows: slider A, toggle B, slider C
+        p.nudgeMode = false
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        _ = try await d.axMixer.syncTracks()
+        do {
+            _ = try await SetPluginParamTool(daemon: d).invoke([
+                "track": .string("vox"), "slot": .int(0), "param": .string("1"), "value": .double(0.5)])
+            XCTFail("expected a wrong-kind ToolFailure for the toggle at index 1")
+        } catch let f as ToolFailure {
+            XCTAssertTrue(f.error.contains("not a settable slider") || f.error.contains("wrong control kind"))
+        }
+    }
+
+    /// Regression for `convergeAdaptive`/`convergeByBisection`'s settle-poll guard (`settledValue`):
+    /// real Logic updates a plugin slider's raw AX value ASYNCHRONOUSLY after `AXSetValue`
+    /// (ax-findings.md) — an immediate re-read can return the stale pre-write value,
+    /// indistinguishable from a genuine stuck boundary. `setValueLatency` on the target slider
+    /// models exactly that: it holds the new raw value back for one subsequent `number(of:)` read.
+    /// Range kept tiny (0…6) so the test only pays the guard's 30ms poll a handful of times rather
+    /// than thousands.
     /// SUCCESS CRITERION (verified manually per the brief): this test goes RED if the `settledValue`
-    /// poll loop is deleted from `convergeToDisplay`'s stuck-check (an unguarded single read sees
+    /// poll loop is deleted from `convergeByBisection`'s stuck-check (an unguarded single read sees
     /// the stale raw on the very first nudge, misreads it as "stuck", and bails with the display
     /// still at 1% instead of the 3% target — `verified` becomes false).
     func testSetPluginParamUnitTargetSettlesAsyncSliderReadback() async throws {
@@ -222,7 +239,7 @@ final class AXPluginToolTests: XCTestCase {
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
         let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [
             FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer", children: [area])]))
-        p.nudgeMode = true
+        p.nudgeMode = false   // Task 0 default: AXSetValue is absolute on Controls-view sliders
         // Display tracks the raw 1:1 (unlike makeConvergingProvider's /100) so a handful of
         // nudges is enough to reach the target — keeps the test's real 30ms settle-polls brief.
         p.onSetNumber = { node, raw in
@@ -239,7 +256,7 @@ final class AXPluginToolTests: XCTestCase {
         XCTAssertEqual(raw, 3, accuracy: 1)
     }
 
-    /// The normalized-0–1 branch (`nudgeToRaw`), distinct from the unit-string `convergeToDisplay`
+    /// The normalized-0–1 branch (`nudgeToRaw`), distinct from the unit-string `convergeAdaptive`
     /// path above: a plain JSON number (`.double`, not a string) maps onto the slider's raw range.
     func testSetPluginParamNormalizedValueConvergesToRawMidpoint() async throws {
         let (p, bass) = makeConvergingProvider()   // minMax 0…10000
@@ -379,5 +396,303 @@ final class AXPluginToolTests: XCTestCase {
         let ws = await bridge.windowsForTest()
         for w in ws where await bridge.titleForTest(w) == title { return w }
         throw XCTSkip("no window '\(title)'")
+    }
+
+    /// A Controls window with an enum popup 'Tape Type' whose menu offers Standard/Vintage/Old; picking
+    /// a menu item sets the popup's displayed value (models Logic). Returns provider + the popup node.
+    private func makeEnumProvider() -> (FakeAXProvider, popup: FakeAXNode) {
+        let popup = FakeAXNode(role: "AXPopUpButton", stringValue: "Standard")
+        let items = ["Standard", "Vintage", "Old"].map { title -> FakeAXNode in
+            let item = FakeAXNode(role: "AXMenuItem", title: title)
+            item.onPress = { popup.stringValue = title }
+            return item
+        }
+        popup.children = [FakeAXNode(role: "AXMenu", children: items)]
+        let cell = FakeAXNode(role: "AXCell", children: [
+            FakeAXNode(role: "AXStaticText", stringValue: "Tape Type:"),
+            FakeAXNode(role: "AXGroup", stringValue: "Standard"), popup])
+        let table = FakeAXNode(role: "AXTable",
+            children: [FakeAXNode(role: "AXRow", subrole: "AXTableRow", children: [cell])])
+        let viewBtn = FakeAXNode(role: "AXMenuButton", description: "view", title: "Controls")
+        let close = FakeAXNode(role: "AXButton", description: "close")
+        let window = FakeAXNode(role: "AXWindow", title: "vox", children: [
+            close, viewBtn, FakeAXNode(role: "AXScrollArea", children: [table])])
+        close.closesWindow = window
+        let open = FakeAXNode(role: "AXButton", description: "open"); open.opensWindow = window
+        let eqGroup = FakeAXNode(role: "AXGroup", description: "Tape", children: [open])
+        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
+            FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute", stringValue: "off"), eqGroup])
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [
+            FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer", children: [area])]))
+        return (p, popup)
+    }
+
+    func testSetPluginOptionSelectsChoice() async throws {
+        let (p, popup) = makeEnumProvider()
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        _ = try await d.axMixer.syncTracks()
+        let r = try await SetPluginOptionTool(daemon: d).invoke([
+            "track": .string("vox"), "slot": .int(0), "param": .string("Tape Type"), "choice": .string("Vintage")])
+        guard case .object(let o) = r else { return XCTFail() }
+        XCTAssertEqual(o["verified"], .bool(true))
+        XCTAssertEqual(popup.stringValue, "Vintage")
+    }
+
+    func testSetPluginOptionUnknownChoiceListsChoices() async throws {
+        let (p, _) = makeEnumProvider()
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        _ = try await d.axMixer.syncTracks()
+        do {
+            _ = try await SetPluginOptionTool(daemon: d).invoke([
+                "track": .string("vox"), "slot": .int(0), "param": .string("Tape Type"), "choice": .string("Nope")])
+            XCTFail("expected an unknown-choice ToolFailure")
+        } catch let f as ToolFailure { XCTAssertTrue(f.expected?.contains("Vintage") ?? false) }
+    }
+
+    /// Same shape as `makeEnumProvider()`, but the popup's displayed `.value` updates
+    /// ASYNCHRONOUSLY after the menu-item press — models real Logic (2026-07-15 live measurement):
+    /// pressing a menu item DOES commit the selection, but the AXPopUpButton's `value` string only
+    /// flips to the new choice ~400ms later. `afterReads: 3` means a single immediate `.value` read
+    /// right after the press still sees the stale prior value; only a settle-poll of repeated reads
+    /// drains the countdown and reveals the new choice.
+    private func makeLaggedEnumProvider() -> (FakeAXProvider, popup: FakeAXNode) {
+        let popup = FakeAXNode(role: "AXPopUpButton", stringValue: "Standard")
+        let items = ["Standard", "Vintage", "Old"].map { title -> FakeAXNode in
+            let item = FakeAXNode(role: "AXMenuItem", title: title)
+            item.onPress = { popup.scheduleValue(title, afterReads: 3) }
+            return item
+        }
+        popup.children = [FakeAXNode(role: "AXMenu", children: items)]
+        let cell = FakeAXNode(role: "AXCell", children: [
+            FakeAXNode(role: "AXStaticText", stringValue: "Tape Type:"),
+            FakeAXNode(role: "AXGroup", stringValue: "Standard"), popup])
+        let table = FakeAXNode(role: "AXTable",
+            children: [FakeAXNode(role: "AXRow", subrole: "AXTableRow", children: [cell])])
+        let viewBtn = FakeAXNode(role: "AXMenuButton", description: "view", title: "Controls")
+        let close = FakeAXNode(role: "AXButton", description: "close")
+        let window = FakeAXNode(role: "AXWindow", title: "vox", children: [
+            close, viewBtn, FakeAXNode(role: "AXScrollArea", children: [table])])
+        close.closesWindow = window
+        let open = FakeAXNode(role: "AXButton", description: "open"); open.opensWindow = window
+        let eqGroup = FakeAXNode(role: "AXGroup", description: "Tape", children: [open])
+        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
+            FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute", stringValue: "off"), eqGroup])
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [
+            FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer", children: [area])]))
+        return (p, popup)
+    }
+
+    /// Locks the smoke-found real-Logic bug: `set_plugin_option` reported `verified:false` even
+    /// though the enum selection succeeded, because Logic updates the popup's displayed value
+    /// ASYNCHRONOUSLY (~400ms live) after the item press, and the tool's verify re-read the popup
+    /// before that landed. `selectEnumChoice` must settle-poll the popup's own value until it
+    /// changes from its pre-selection value (or a deadline) before returning, so the caller's verify
+    /// only ever observes the committed choice.
+    func testSetPluginOptionSettlesLaggedPopupValue() async throws {
+        let (p, popup) = makeLaggedEnumProvider()
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        _ = try await d.axMixer.syncTracks()
+        let r = try await SetPluginOptionTool(daemon: d).invoke([
+            "track": .string("vox"), "slot": .int(0), "param": .string("Tape Type"), "choice": .string("Vintage")])
+        guard case .object(let o) = r else { return XCTFail() }
+        XCTAssertEqual(o["verified"], .bool(true), "selectEnumChoice must wait for the lagged popup value before returning")
+        XCTAssertEqual(popup.stringValue, "Vintage")
+    }
+
+    /// Same shape as `makeEnumProvider()`, but the popup's `AXMenu` child (carrying the items) is
+    /// ABSENT at press time and only appears after a few `children(of: popup)` reads — models the
+    /// smoke-found real-Logic bug (2026-07-16): the enum's AXMenu populates ASYNCHRONOUSLY (~100ms)
+    /// after the popup is pressed. The OLD `selectEnumChoice` read `menuItems(under: popup)` once
+    /// after a FIXED 40ms sleep; on a busy Logic instance that single read landed before the AXMenu
+    /// appeared, saw ZERO items, and threw a spurious "no choice '<x>'  expected: one of: " (an EMPTY
+    /// choice list) even though the choice was perfectly valid. `afterReads: 3` means three
+    /// `children(of: popup)` reads still see no AXMenu; only the fourth reveals it — same idiom as
+    /// `testSettledControlTablePollsPastEmptyReads`'s `scheduleChildAppend` for this bug class.
+    private func makeMenuPopulateLatencyEnumProvider() -> (FakeAXProvider, popup: FakeAXNode) {
+        let popup = FakeAXNode(role: "AXPopUpButton", stringValue: "Standard")
+        let items = ["Standard", "Vintage", "Old"].map { title -> FakeAXNode in
+            let item = FakeAXNode(role: "AXMenuItem", title: title)
+            item.onPress = { popup.stringValue = title }
+            return item
+        }
+        let menuNode = FakeAXNode(role: "AXMenu", children: items)
+        // NO AXMenu child yet — models the pre-populate gap. Revealed only after 3 stale reads.
+        popup.scheduleChildAppend(menuNode, afterReads: 3)
+        let cell = FakeAXNode(role: "AXCell", children: [
+            FakeAXNode(role: "AXStaticText", stringValue: "Tape Type:"),
+            FakeAXNode(role: "AXGroup", stringValue: "Standard"), popup])
+        let table = FakeAXNode(role: "AXTable",
+            children: [FakeAXNode(role: "AXRow", subrole: "AXTableRow", children: [cell])])
+        let viewBtn = FakeAXNode(role: "AXMenuButton", description: "view", title: "Controls")
+        let close = FakeAXNode(role: "AXButton", description: "close")
+        let window = FakeAXNode(role: "AXWindow", title: "vox", children: [
+            close, viewBtn, FakeAXNode(role: "AXScrollArea", children: [table])])
+        close.closesWindow = window
+        let open = FakeAXNode(role: "AXButton", description: "open"); open.opensWindow = window
+        let eqGroup = FakeAXNode(role: "AXGroup", description: "Tape", children: [open])
+        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
+            FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute", stringValue: "off"), eqGroup])
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [
+            FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer", children: [area])]))
+        return (p, popup)
+    }
+
+    /// Locks the smoke-found real-Logic bug: `set_plugin_option` intermittently failed with
+    /// "no choice '<x>'  expected: one of: " (an EMPTY list) when Logic was busy, because
+    /// `selectEnumChoice` read the popup's `AXMenu` after a FIXED 40ms sleep instead of settle-polling
+    /// for it to populate (~100ms live). `selectEnumChoice` must poll `menuItems` until they appear
+    /// (or a ~1s deadline) rather than reading once.
+    func testSetPluginOptionSettlesMenuPopulateLatency() async throws {
+        let (p, popup) = makeMenuPopulateLatencyEnumProvider()
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        _ = try await d.axMixer.syncTracks()
+        let r = try await SetPluginOptionTool(daemon: d).invoke([
+            "track": .string("vox"), "slot": .int(0), "param": .string("Tape Type"), "choice": .string("Vintage")])
+        guard case .object(let o) = r else { return XCTFail() }
+        XCTAssertEqual(o["verified"], .bool(true), "selectEnumChoice must settle-poll past the empty-menu reads")
+        XCTAssertEqual(popup.stringValue, "Vintage")
+    }
+
+    /// Regression for the live opaque:true race: the Controls AXTable populates async after the view
+    /// switch. `settledControlTable` must poll past the empty reads; a single `controlTable` sees [].
+    func testSettledControlTablePollsPastEmptyReads() async throws {
+        let slider = FakeAXNode(role: "AXSlider", value: 240, settable: true, minValue: 0, maxValue: 480)
+        let cell = FakeAXNode(role: "AXCell", children: [
+            FakeAXNode(role: "AXStaticText", stringValue: "Gain:"),
+            FakeAXNode(role: "AXGroup", stringValue: "0.0 dB"), slider])
+        let row = FakeAXNode(role: "AXRow", subrole: "AXTableRow", children: [cell])
+        let table = FakeAXNode(role: "AXTable")                 // starts EMPTY
+        table.scheduleChildAppend(row, afterReads: 2)           // row appears only after 2 children reads
+        let window = FakeAXNode(role: "AXWindow", title: "vox", children: [
+            FakeAXNode(role: "AXButton", description: "close"),
+            FakeAXNode(role: "AXMenuButton", description: "view", title: "Controls"),
+            FakeAXNode(role: "AXScrollArea", children: [table])])
+        let bridge = AXBridge(provider: FakeAXProvider(root:
+            FakeAXNode(role: "AXApplication", children: [window])))
+        let handle = try await firstWindowHandle(bridge, title: "vox")
+        let firstRead = await bridge.controlTable(in: handle)
+        XCTAssertTrue(firstRead.isEmpty, "first single read sees the empty table")
+        let settled = await bridge.settledControlTable(in: handle)
+        XCTAssertEqual(settled.map(\.name), ["Gain"], "settledControlTable polls until the row populates")
+    }
+
+    func testPressPluginControlTogglesCheckbox() async throws {
+        let (p, _, _) = makeMixedKindProvider()          // rows: slider A, toggle B ("0"), slider C
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        _ = try await d.axMixer.syncTracks()
+        let r = try await PressPluginControlTool(daemon: d).invoke([
+            "track": .string("vox"), "slot": .int(0), "param": .string("B")])
+        guard case .object(let o) = r else { return XCTFail() }
+        XCTAssertEqual(o["display"], .string("1"), "the checkbox flipped 0→1")
+        XCTAssertEqual(o["verified"], .bool(true))
+    }
+
+    func testPressPluginControlRejectsSlider() async throws {
+        let (p, _, _) = makeMixedKindProvider()
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        _ = try await d.axMixer.syncTracks()
+        do {
+            _ = try await PressPluginControlTool(daemon: d).invoke([
+                "track": .string("vox"), "slot": .int(0), "param": .string("A")])
+            XCTFail("expected a wrong-kind ToolFailure for a slider")
+        } catch let f as ToolFailure { XCTAssertTrue(f.error.contains("set_plugin_param")) }
+    }
+
+    /// A set_plugin_param followed by undo_last must return the slider to its prior display value,
+    /// via OUR journal (undo_last), not Logic's Edit▸Undo — the smoke's wrong-thing-undone hazard.
+    func testUndoLastReversesSetPluginParam() async throws {
+        let (p, bass) = makeConvergingProvider()         // display = raw/100 %, starts at 0 %
+        p.nudgeMode = false
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        let registry = ToolRegistry(); await d.registerAllTools(in: registry)
+        _ = try await d.axMixer.syncTracks()
+        _ = try await SetPluginParamTool(daemon: d).invoke([
+            "track": .string("vox"), "slot": .int(0), "param": .string("Bass"), "value": .string("25 %")])
+        XCTAssertEqual(try XCTUnwrap(bass.numberValue), 2500, accuracy: 1)
+        _ = try await UndoLastTool(daemon: d, registry: registry).invoke(["n": .int(1)])
+        XCTAssertEqual(try XCTUnwrap(bass.numberValue), 0, accuracy: 1, "undo_last re-drove the slider to its prior 0 %")
+    }
+
+    /// Locks the UndoTool.swift value/choice string-coercion fix with a BARE-numeric display (no
+    /// unit suffix at all, e.g. real Logic integer-count params) — the trickiest case, since a bare
+    /// numeric string like "3" is exactly what `Double(raw)` in UndoTool's coercion loop parses
+    /// most readily. Without excluding "value" from that coercion, the undo's `value:"3"` string
+    /// gets turned into `.double(3)`, which `set_plugin_param` treats as the NORMALIZED 0.0–1.0
+    /// branch (3 is out of range) and throws — the undo call fails, is recorded as "skipped", and
+    /// the slider is left at its post-set value (5) instead of reverting to 3.
+    func testUndoLastReversesSetPluginParamBareNumericDisplay() async throws {
+        let group = FakeAXNode(role: "AXGroup", stringValue: "3")
+        let bass  = FakeAXNode(role: "AXSlider", value: 3, settable: true, minValue: 0, maxValue: 10)
+        let cell  = FakeAXNode(role: "AXCell", children: [
+            FakeAXNode(role: "AXStaticText", stringValue: "Bass:"), group, bass])
+        let table = FakeAXNode(role: "AXTable",
+            children: [FakeAXNode(role: "AXRow", subrole: "AXTableRow", children: [cell])])
+        let viewBtn = FakeAXNode(role: "AXMenuButton", description: "view", title: "Controls")
+        let close = FakeAXNode(role: "AXButton", description: "close")
+        let window = FakeAXNode(role: "AXWindow", title: "vox", children: [
+            close, viewBtn, FakeAXNode(role: "AXScrollArea", children: [table])])
+        close.closesWindow = window
+        let open = FakeAXNode(role: "AXButton", description: "open"); open.opensWindow = window
+        let eqGroup = FakeAXNode(role: "AXGroup", description: "Channel EQ", children: [open])
+        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
+            FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute", stringValue: "off"),
+            eqGroup])
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [
+            FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer", children: [area])]))
+        p.nudgeMode = false   // Task 0 default: AXSetValue is absolute on Controls-view sliders
+        p.onSetNumber = { node, raw in
+            if node === bass { group.stringValue = "\(Int(raw))" }   // bare-numeric display, no unit
+        }
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        let registry = ToolRegistry(); await d.registerAllTools(in: registry)
+        _ = try await d.axMixer.syncTracks()
+        _ = try await SetPluginParamTool(daemon: d).invoke([
+            "track": .string("vox"), "slot": .int(0), "param": .string("Bass"), "value": .string("5")])
+        XCTAssertEqual(try XCTUnwrap(bass.numberValue), 5, accuracy: 1)
+        _ = try await UndoLastTool(daemon: d, registry: registry).invoke(["n": .int(1)])
+        XCTAssertEqual(try XCTUnwrap(bass.numberValue), 3, accuracy: 1,
+                       "undo_last re-drove the bare-numeric-display slider back to its prior raw 3")
+    }
+
+    /// A set_plugin_option followed by undo_last must re-select the popup's prior choice, via OUR
+    /// journal — the option half of the smoke's "wrong-thing-undone" hazard. Also a regression guard
+    /// for the reconstruction bug where a numeric-LOOKING `choice` string (e.g. an enum whose options
+    /// are bare digits, as real Logic's Channel EQ "Low Cut Slope" popup has) got coerced to a
+    /// `.double` by `UndoLastTool` and `requireString` then threw, silently dropping the undo.
+    func testUndoLastReversesSetPluginOption() async throws {
+        let (p, popup) = makeEnumProvider()               // starts "Standard"
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        let registry = ToolRegistry(); await d.registerAllTools(in: registry)
+        _ = try await d.axMixer.syncTracks()
+        _ = try await SetPluginOptionTool(daemon: d).invoke([
+            "track": .string("vox"), "slot": .int(0), "param": .string("Tape Type"), "choice": .string("Vintage")])
+        XCTAssertEqual(popup.stringValue, "Vintage")
+        _ = try await UndoLastTool(daemon: d, registry: registry).invoke(["n": .int(1)])
+        XCTAssertEqual(popup.stringValue, "Standard", "undo_last re-selected the prior choice")
+    }
+
+    /// A press_plugin_control (toggle) followed by undo_last must re-press the checkbox back — a
+    /// toggle's own undo is another press of the same control (involutive).
+    func testUndoLastReversesPressPluginControl() async throws {
+        let (p, _, _) = makeMixedKindProvider()            // rows: slider A, toggle B ("0"), slider C
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        let registry = ToolRegistry(); await d.registerAllTools(in: registry)
+        _ = try await d.axMixer.syncTracks()
+        let r = try await PressPluginControlTool(daemon: d).invoke([
+            "track": .string("vox"), "slot": .int(0), "param": .string("B")])
+        guard case .object(let o) = r else { return XCTFail() }
+        XCTAssertEqual(o["display"], .string("1"), "the checkbox flipped 0→1")
+        _ = try await UndoLastTool(daemon: d, registry: registry).invoke(["n": .int(1)])
+        let after = try await GetPluginParamsTool(daemon: d).invoke(["track": .string("vox"), "slot": .int(0)])
+        guard case .object(let ao) = after, case .array(let params)? = ao["params"] else { return XCTFail() }
+        let bDisplay = params.compactMap { p -> Value? in
+            guard case .object(let po) = p, po["name"] == .string("B") else { return nil }
+            return po["display"]
+        }.first
+        XCTAssertEqual(bDisplay, .string("0"), "undo_last re-pressed the toggle back to 0")
     }
 }

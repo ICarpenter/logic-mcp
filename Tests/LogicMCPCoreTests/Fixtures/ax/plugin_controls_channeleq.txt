@@ -1,0 +1,242 @@
+# Captured 2026-07-17, Logic 12.3, mcp_test — 'vox' Channel EQ in CONTROLS view.
+# Controls-view slider primitive (Task 0 probe): AXSetValue is ABSOLUTE + LINEAR.
+# Low Shelf Gain: raw 0..480, dB=(raw-240)/10 (raw 240=0dB, 480=+24dB). AXIncrement=+24 raw.
+AXWindow subrole="AXDialog" title="vox" settable=false
+  AXButton description="close" settable=false
+  AXButton description="toolbar" settable=false
+  AXCheckBox description="link" value="0" settable=false
+  AXMenuButton description="view" title="Controls" settable=false
+  AXButton description="bypass" title=" " settable=false
+  AXCheckBox description="compare" title="Compare" value="1" settable=false
+  AXGroup settable=false
+    AXButton subrole="AXSegment" description="previous" settable=false
+    AXButton subrole="AXSegment" description="next" settable=false
+  AXPopUpButton value="Default Preset" settable=false
+  AXStaticText value="Channel EQ" settable=false
+  AXScrollArea settable=false
+    AXTable settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Low Cut On/Off:" settable=false
+          AXCheckBox value="0" settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Low Cut Frequency:" settable=false
+          AXGroup value="20.0 Hz" settable=false
+          AXSlider value="0" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Low Cut Slope:" settable=false
+          AXPopUpButton value="12 dB/Oct" settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Low Cut Q-Factor:" settable=false
+          AXGroup value="0.71" settable=false
+          AXSlider value="36" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Low Shelf On/Off:" settable=false
+          AXCheckBox value="1" settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Low Shelf Frequency:" settable=false
+          AXGroup value="75.0 Hz" settable=false
+          AXSlider value="200" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Low Shelf Gain:" settable=false
+          AXGroup value="0.0 dB" settable=false
+          AXSlider value="240" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Low Shelf Q-Factor:" settable=false
+          AXGroup value="1.00" settable=false
+          AXSlider value="40" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Peak 1 On/Off:" settable=false
+          AXCheckBox value="1" settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Peak 1 Frequency:" settable=false
+          AXGroup value="100 Hz" settable=false
+          AXSlider value="250" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Peak 1 Gain:" settable=false
+          AXGroup value="0.0 dB" settable=false
+          AXSlider value="240" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Peak 1 Q-Factor:" settable=false
+          AXGroup value="0.60" settable=false
+          AXSlider value="33" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Peak 2 On/Off:" settable=false
+          AXCheckBox value="1" settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Peak 2 Frequency:" settable=false
+          AXGroup value="250 Hz" settable=false
+          AXSlider value="375" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Peak 2 Gain:" settable=false
+          AXGroup value="0.0 dB" settable=false
+          AXSlider value="240" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Peak 2 Q-Factor:" settable=false
+          AXGroup value="0.30" settable=false
+          AXSlider value="20" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Peak 3 On/Off:" settable=false
+          AXCheckBox value="1" settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Peak 3 Frequency:" settable=false
+          AXGroup value="1040 Hz" settable=false
+          AXSlider value="604" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Peak 3 Gain:" settable=false
+          AXGroup value="0.0 dB" settable=false
+          AXSlider value="240" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Peak 3 Q-Factor:" settable=false
+          AXGroup value="0.41" settable=false
+          AXSlider value="26" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Peak 4 On/Off:" settable=false
+          AXCheckBox value="1" settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Peak 4 Frequency:" settable=false
+          AXGroup value="2500 Hz" settable=false
+          AXSlider value="725" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Peak 4 Gain:" settable=false
+          AXGroup value="0.0 dB" settable=false
+          AXSlider value="240" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Peak 4 Q-Factor:" settable=false
+          AXGroup value="0.20" settable=false
+          AXSlider value="13" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="High Shelf On/Off:" settable=false
+          AXCheckBox value="1" settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="High Shelf Frequency:" settable=false
+          AXGroup value="7500 Hz" settable=false
+          AXSlider value="900" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="High Shelf Gain:" settable=false
+          AXGroup value="0.0 dB" settable=false
+          AXSlider value="240" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="High Shelf Q-Factor:" settable=false
+          AXGroup value="1.00" settable=false
+          AXSlider value="40" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="High Cut On/Off:" settable=false
+          AXCheckBox value="0" settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="High Cut Frequency:" settable=false
+          AXGroup value="20000 Hz" settable=false
+          AXSlider value="1050" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="High Cut Slope:" settable=false
+          AXPopUpButton value="24 dB/Oct" settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="High Cut Q-Factor:" settable=false
+          AXGroup value="0.71" settable=false
+          AXSlider value="36" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Master  Gain:" settable=false
+          AXGroup value="0.0 dB" settable=false
+          AXSlider value="240" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Analyzer On/Off:" settable=false
+          AXCheckBox value="1" settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Analyzer Resolution:" settable=false
+          AXPopUpButton value="Medium (4096 points)" settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Analyzer Top:" settable=false
+          AXGroup value="0 dB" settable=false
+          AXSlider value="4" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Analyzer Position:" settable=false
+          AXRadioButton title="Pre EQ" value="0" settable=false
+          AXRadioButton title="Post EQ" value="1" settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Analyzer Mode:" settable=false
+          AXRadioButton title="Peak" value="1" settable=false
+          AXRadioButton title="RMS" value="0" settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Analyzer Decay:" settable=false
+          AXGroup value="10 dB/s" settable=false
+          AXSlider value="10" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Gain-Q Coupling:" settable=false
+          AXCheckBox value="1" settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Gain-Q Couple Mode:" settable=false
+          AXPopUpButton value="Asymmetric Medium" settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Oversampling:" settable=false
+          AXCheckBox value="0" settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Channel Processing:" settable=false
+          AXPopUpButton value="Stereo" settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Visualize Master Gain:" settable=false
+          AXCheckBox value="1" settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="EQ dB Scale Mode:" settable=false
+          AXPopUpButton value="Linear 30 dB" settable=false
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="EQ Scale Shift:" settable=false
+          AXGroup value="0" settable=false
+          AXSlider value="5" settable=true
+      AXRow subrole="AXTableRow" settable=false
+        AXCell settable=false
+          AXStaticText value="Analyzer Range:" settable=false
+          AXRadioButton title="60 dB" value="1" settable=false
+          AXRadioButton title="120 dB" value="0" settable=false
+      AXColumn settable=false
+    AXScrollBar value="0" settable=true
+      AXValueIndicator value="0" settable=true
+      AXButton subrole="AXIncrementArrow" settable=false
+      AXButton subrole="AXDecrementArrow" settable=false
+      AXButton subrole="AXIncrementPage" settable=false
+      AXButton subrole="AXDecrementPage" settable=false
+  AXStaticText value="vox" settable=false

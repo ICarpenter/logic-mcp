@@ -16,7 +16,7 @@ public enum PluginDisplay {
         // Leading signed decimal: optional '-', digits, optional '.digits'. A leading number that
         // is immediately followed by '/' (e.g. "1/4") is a fraction ENUM, not a scalar — reject.
         var idx = str.startIndex
-        if idx < str.endIndex, str[idx] == "-" { idx = str.index(after: idx) }
+        if idx < str.endIndex, str[idx] == "-" || str[idx] == "+" { idx = str.index(after: idx) }
         var sawDigit = false
         while idx < str.endIndex, str[idx].isNumber { idx = str.index(after: idx); sawDigit = true }
         if idx < str.endIndex, str[idx] == "." {

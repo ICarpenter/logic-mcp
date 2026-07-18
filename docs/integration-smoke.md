@@ -225,3 +225,26 @@ the real-Logic smoke above must specifically check each of these.
   3. Note: `undo_last` re-enters the registry (it calls other tools), so a
      naive non-reentrant lock would **deadlock** — any guard must be
      reentrant-safe or scoped to exclude the undo replay path.
+
+## Plugin write-path smoke (`set_plugin_param` / `set_plugin_option` / `press_plugin_control`)
+
+Verified live on `mcp_test` (2026-07-17, branch `feat/plugin-actuation`). Reconnect `/mcp` after any
+rebuild (`ping` must show `stale:false`) or you test old code. Drive everything in the background —
+Logic must never come frontmost.
+
+1. **Stock slider by unit** — `set_plugin_param(vox, 0, "Low Shelf Gain", "-3 dB")` → `-3.0 dB`,
+   `verified:true`. (This is the case that railed to +24 dB before the converger rewrite.)
+2. **Stock slider normalized** — `set_plugin_param(vox, 0, "Low Shelf Gain", 0.5)` → `0.0 dB`, verified.
+3. **Rail + undo** — `set_plugin_param(vox, 0, "Low Shelf Gain", "+24 dB")` → verified; then
+   `undo_last(1)` re-drives it back to the prior value (validates the bisection rail-return + self-journal).
+4. **Stock enum** — `set_plugin_option(vox, 0, "Low Cut Slope", "18")` → `18 dB/Oct`, verified.
+5. **Stock toggle** — `press_plugin_control(vox, 0, "Low Cut On/Off")` flips the checkbox; verified by re-read.
+6. **THIRD-PARTY write (ship gate)** — `insert_plugin(<scratch>, "SketchCassette II")`;
+   `get_plugin_params` returns its named/unit-valued table; `set_plugin_param(<scratch>, n, "Comp. Dry/Wet",
+   "50 %")` → `50.0 %`, `verified:true`; `set_plugin_option(<scratch>, n, "Tape Quality", "Master")` verified;
+   a bogus choice returns the live choice list. Then `undo_structural` removes the insert (net-zero).
+
+**Timing gotchas confirmed live (all handled by settle-polls):** the Controls table populates async after
+the view switch (`settledControlTable`); a Logic dB display of a positive value is `+N dB` (the parser must
+accept a leading `+`); an enum popup's menu appears ~100 ms after the press and its selected value updates
+~400 ms after the item press (`selectEnumChoice` settle-polls both).

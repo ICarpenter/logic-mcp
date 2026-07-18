@@ -120,7 +120,7 @@ func axEnterPluginControls(_ daemon: Daemon, trackName: String, slot: Int) async
                           expected: "an open plugin window titled '\(name)'", observed: "no plugin window")
     }
     try await daemon.ax.switchToControlsView(window)
-    let controls = await daemon.ax.controlTable(in: window)
+    let controls = await daemon.ax.settledControlTable(in: window)
     return (name, window, controls)
 }
 
@@ -136,8 +136,10 @@ public struct GetPluginParamsTool: LogicTool {
         }
         let (name, _, controls) = try await axEnterPluginControls(daemon, trackName: trackName, slot: slot)
         let params: [Value] = controls.map { c in
-            .object(["index": .int(c.index), "name": .string(c.name), "kind": .string(c.kind.rawValue),
-                     "display": .string(c.display ?? ""), "settable": .bool(c.settable)])
+            var obj: [String: Value] = ["index": .int(c.index), "name": .string(c.name), "kind": .string(c.kind.rawValue),
+                                        "display": .string(c.display ?? ""), "settable": .bool(c.settable)]
+            if let ch = c.choices { obj["choices"] = .array(ch.map { .string($0) }) }
+            return .object(obj)
         }
         return .object(["track": .string(name), "slot": .int(slot),
                         "opaque": .bool(controls.isEmpty), "params": .array(params)])
@@ -172,13 +174,28 @@ public struct SetPluginParamTool: LogicTool {
         // list, which would put a different control at a given index than the one just listed
         // (see the whole-branch review: `set_plugin_param(param:"3")` could silently hit the
         // wrong slider and still report `verified:true`). The resolved control must still be a
-        // slider — an integer index landing on a toggle/popup is "no match", not a silent misuse.
+        // slider — an integer index landing on a toggle/popup throws its own kind-mismatch error
+        // below, not a silent "no match".
         let sliders = controls.filter { $0.kind == .slider }
         let wanted = paramKey.lowercased()
-        let target = sliders.first { $0.name.lowercased().hasPrefix(wanted) }
-            ?? Int(paramKey).flatMap { i in (0..<controls.count).contains(i) ? controls[i] : nil }
-                .flatMap { $0.kind == .slider ? $0 : nil }
-        guard let target else {
+        let byIndex = Int(paramKey).flatMap { i in (0..<controls.count).contains(i) ? controls[i] : nil }
+        // An integer index resolves against the FULL control list (see comment above), so it can
+        // land on a toggle/popup. Previously that was silently pruned to `nil` via
+        // `.flatMap { $0.kind == .slider ? $0 : nil }` and fell through to the generic "no
+        // parameter" error below — indistinguishable from a genuinely out-of-range index, and
+        // pointing the caller nowhere useful. Surface it as its own "wrong control kind" error
+        // instead, ahead of the generic miss, so `set_plugin_param(param:"1")` against a toggle
+        // says so rather than claiming no such parameter exists.
+        let target: PluginControl
+        if let named = sliders.first(where: { $0.name.lowercased().hasPrefix(wanted) }) {
+            target = named
+        } else if let byIndex {
+            guard byIndex.kind == .slider else {
+                throw ToolFailure(error: "parameter '\(byIndex.name)' is not a settable slider (it is a \(byIndex.kind.rawValue)) — use the tool for that control kind instead",
+                                  layer: "ax", expected: "a settable slider", observed: "kind: \(byIndex.kind.rawValue)")
+            }
+            target = byIndex
+        } else {
             throw ToolFailure(error: "no parameter '\(paramKey)'", layer: "ax",
                               expected: sliders.map(\.name).joined(separator: ", "), observed: "no match")
         }
@@ -186,11 +203,18 @@ public struct SetPluginParamTool: LogicTool {
             throw ToolFailure(error: "parameter '\(target.name)' is not a settable slider", layer: "ax",
                               expected: "a settable slider with a display", observed: "not settable")
         }
+        // Prior state, captured BEFORE converging, is the undo target — plugin-slider writes do
+        // not register a Logic undo entry (Task 0), so undo_last self-journals and replays this
+        // same tool with the prior display to re-drive the control back.
+        let priorDisplay = target.display ?? ""
+        let undoable = PluginDisplay.parse(priorDisplay).number != nil
 
-        // Both convergence paths nudge ±1 raw unit per AXSetValue call (ax-findings.md), so the
-        // step budget must scale with the slider's actual raw range — a flat cap (e.g. 600)
-        // can't reach a far target on a wide-range slider (a 0…10000 raw Bass % control needs up
-        // to 10000 nudges to traverse end to end).
+        // The default `.absolute` convergence path (`convergeByBisection`) binary-searches the raw
+        // range and does not consume `steps` at all. `steps` feeds the normalized `nudgeToRaw`
+        // path (±1 raw unit per AXSetValue call, ax-findings.md) and the `.step`
+        // (AXIncrement/AXDecrement) fallback, so it must scale with the slider's actual raw range —
+        // a flat cap (e.g. 600) can't reach a far target on a wide-range slider (a 0…10000 raw Bass
+        // % control needs up to 10000 nudges to traverse end to end).
         let (loO, hiO) = await daemon.ax.minMax(of: target.handle)
         guard let lo = loO, let hi = hiO, hi > lo else {
             throw ToolFailure(error: "parameter '\(target.name)' has no readable range", layer: "ax",
@@ -202,8 +226,9 @@ public struct SetPluginParamTool: LogicTool {
         if let unitStr = args["value"]?.stringValue, PluginDisplay.parse(unitStr).number != nil {
             // Unit target: converge against the display-string oracle.
             let goal = PluginDisplay.parse(unitStr).number!
-            let achieved = try await daemon.ax.convergeToDisplay(
-                slider: target.handle, display: displayHandle, target: goal, tolerance: 0.5, maxSteps: steps)
+            let achieved = try await daemon.ax.convergeAdaptive(
+                slider: target.handle, display: displayHandle, target: goal, tolerance: 0.5,
+                actuation: AXBridge.defaultSliderActuation, maxSteps: steps)
             verified = achieved.map { abs($0 - goal) <= 0.5 } ?? false
         } else if let norm = args["value"]?.coercedDouble, (0.0...1.0).contains(norm) {
             // Normalized target: map onto the slider's raw range and nudge there.
@@ -217,8 +242,109 @@ public struct SetPluginParamTool: LogicTool {
 
         let display = await daemon.ax.stringValue(.value, of: displayHandle) ?? ""
         await daemon.journal.record(MixMutation(
-            tool: "set_plugin_param", track: name, undoArguments: nil,
+            tool: "set_plugin_param", track: name,
+            undoArguments: undoable ? ["track": name, "slot": String(slot),
+                                       "param": target.name, "value": priorDisplay] : nil,
             descriptionText: "\(name) \(target.name) → \(display)"))
         return .object(["param": .string(target.name), "display": .string(display), "verified": .bool(verified)])
+    }
+}
+
+public struct SetPluginOptionTool: LogicTool {
+    public let name = "set_plugin_option"
+    public let description = "Select a value in a plugin's enum parameter (an in-table popup) via Logic's Controls view, verified against the popup's displayed value. 'param': name (prefix ok) or integer index. 'choice': the exact option name."
+    public let inputSchema = trackArgSchema([
+        "slot": .object(["type": .string("integer")]),
+        "param": .object(["type": .string("string"), "description": .string("Parameter name (prefix ok) or integer index")]),
+        "choice": .object(["type": .string("string"), "description": .string("The option name to select")]),
+    ], required: ["slot", "param", "choice"])
+    let daemon: Daemon
+
+    public func invoke(_ args: [String: Value]) async throws -> Value {
+        let trackName = try requireString(args, "track", tool: name)
+        guard let slot = args["slot"]?.coercedInt, (0...127).contains(slot) else {
+            throw ToolFailure(error: "'slot' must be an integer in 0…127", layer: "daemon")
+        }
+        let paramKey = args["param"]?.stringValue ?? args["param"]?.coercedInt.map(String.init)
+        guard let paramKey else { throw ToolFailure(error: "missing required argument 'param'", layer: "daemon") }
+        let choice = try requireString(args, "choice", tool: name)
+
+        let (name, _, controls) = try await axEnterPluginControls(daemon, trackName: trackName, slot: slot)
+        guard !controls.isEmpty else {
+            throw ToolFailure(error: "plugin exposes no addressable parameters", layer: "ax",
+                              expected: "an addressable Controls-view parameter", observed: "opaque plugin")
+        }
+        let wanted = paramKey.lowercased()
+        let target = controls.first { $0.name.lowercased().hasPrefix(wanted) }
+            ?? Int(paramKey).flatMap { i in (0..<controls.count).contains(i) ? controls[i] : nil }
+        guard let target else {
+            throw ToolFailure(error: "no parameter '\(paramKey)'", layer: "ax",
+                              expected: controls.map(\.name).joined(separator: ", "), observed: "no match")
+        }
+        guard target.kind == .popup else {
+            throw ToolFailure(error: "parameter '\(target.name)' is not an enum popup — use \(target.kind == .slider ? "set_plugin_param" : "press_plugin_control")",
+                              layer: "ax", expected: "an enum popup parameter", observed: "kind \(target.kind.rawValue)")
+        }
+        // Prior choice, captured BEFORE selecting, is the undo target.
+        let priorChoice = target.display ?? ""
+        try await daemon.menu.selectEnumChoice(from: target.handle, choice: choice)
+        // Oracle: re-open + re-walk (settled) and confirm the popup display reflects `choice`. The
+        // display can be verbose ("18 dB/Oct") vs an abbreviated choice ("18") — accept either containment.
+        let (_, _, after) = try await axEnterPluginControls(daemon, trackName: trackName, slot: slot)
+        let now = after.first { $0.name == target.name }?.display ?? ""
+        let verified = now.range(of: choice, options: .caseInsensitive) != nil
+            || choice.range(of: now, options: .caseInsensitive) != nil
+        await daemon.journal.record(MixMutation(
+            tool: "set_plugin_option", track: name,
+            undoArguments: ["track": name, "slot": String(slot), "param": target.name, "choice": priorChoice],
+            descriptionText: "\(name) \(target.name) → \(now)"))
+        return .object(["param": .string(target.name), "display": .string(now), "verified": .bool(verified)])
+    }
+}
+
+public struct PressPluginControlTool: LogicTool {
+    public let name = "press_plugin_control"
+    public let description = "Press or toggle a plugin's in-table checkbox/switch control by name, via Logic's Controls view, verified by re-reading its value. Use set_plugin_param for sliders and set_plugin_option for enum popups. (Header controls like bypass/compare are not addressable yet.)"
+    public let inputSchema = trackArgSchema([
+        "slot": .object(["type": .string("integer")]),
+        "param": .object(["type": .string("string"), "description": .string("Control name (prefix ok) or integer index")]),
+    ], required: ["slot", "param"])
+    let daemon: Daemon
+
+    public func invoke(_ args: [String: Value]) async throws -> Value {
+        let trackName = try requireString(args, "track", tool: name)
+        guard let slot = args["slot"]?.coercedInt, (0...127).contains(slot) else {
+            throw ToolFailure(error: "'slot' must be an integer in 0…127", layer: "daemon")
+        }
+        let paramKey = args["param"]?.stringValue ?? args["param"]?.coercedInt.map(String.init)
+        guard let paramKey else { throw ToolFailure(error: "missing required argument 'param'", layer: "daemon") }
+
+        let (name, _, controls) = try await axEnterPluginControls(daemon, trackName: trackName, slot: slot)
+        guard !controls.isEmpty else {
+            throw ToolFailure(error: "plugin exposes no addressable parameters", layer: "ax",
+                              expected: "an addressable Controls-view control", observed: "opaque plugin")
+        }
+        let wanted = paramKey.lowercased()
+        let target = controls.first { $0.name.lowercased().hasPrefix(wanted) }
+            ?? Int(paramKey).flatMap { i in (0..<controls.count).contains(i) ? controls[i] : nil }
+        guard let target else {
+            throw ToolFailure(error: "no control '\(paramKey)'", layer: "ax",
+                              expected: controls.map(\.name).joined(separator: ", "), observed: "no match")
+        }
+        guard target.kind == .toggle else {
+            throw ToolFailure(error: "control '\(target.name)' is a \(target.kind.rawValue) — use \(target.kind == .slider ? "set_plugin_param" : "set_plugin_option")",
+                              layer: "ax", expected: "a pressable toggle/button", observed: "kind \(target.kind.rawValue)")
+        }
+        let before = target.display ?? ""
+        try await daemon.ax.press(target.handle)
+        // Oracle: re-open + re-walk (settled) and confirm the toggle's value changed.
+        let (_, _, after) = try await axEnterPluginControls(daemon, trackName: trackName, slot: slot)
+        let now = after.first { $0.name == target.name }?.display ?? ""
+        await daemon.journal.record(MixMutation(
+            tool: "press_plugin_control", track: name,
+            // Involutive: a toggle's own undo is another press of the same control.
+            undoArguments: ["track": name, "slot": String(slot), "param": target.name],
+            descriptionText: "\(name) \(target.name) → \(now)"))
+        return .object(["param": .string(target.name), "display": .string(now), "verified": .bool(!now.isEmpty && now != before)])
     }
 }

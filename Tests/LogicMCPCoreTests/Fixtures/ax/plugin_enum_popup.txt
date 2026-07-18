@@ -1,0 +1,12 @@
+# Captured 2026-07-17, Logic 12.3, mcp_test — 'vox' Channel EQ 'Low Cut Slope' popup PRESSED.
+# Task 0 finding: an in-table enum AXPopUpButton opens a PLAIN AXMenu of AXMenuItems (no
+# AXSearchField). NOTE item titles are ABBREVIATED ('12') vs the popup display ('12 dB/Oct').
+          AXStaticText value="Low Cut Slope:" settable=false
+          AXPopUpButton value="12 dB/Oct" settable=false
+            AXMenu settable=false
+              AXMenuItem title="6" settable=false
+              AXMenuItem title="12" settable=false
+              AXMenuItem title="18" settable=false
+              AXMenuItem title="24" settable=false
+              AXMenuItem title="36" settable=false
+              AXMenuItem title="48" settable=false

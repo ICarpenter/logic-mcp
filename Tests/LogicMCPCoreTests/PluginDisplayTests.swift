@@ -10,6 +10,12 @@ final class PluginDisplayTests: XCTestCase {
         XCTAssertEqual(PluginDisplay.parse("-6 dB"),  .init(number: -6,   unit: "dB", raw: "-6 dB"))
         XCTAssertEqual(PluginDisplay.parse("0 ms"),   .init(number: 0,    unit: "ms", raw: "0 ms"))
     }
+    /// Real Logic displays POSITIVE dB values with an explicit leading '+' (e.g. Channel EQ Low
+    /// Shelf Gain top rail reads "+24.0 dB"). `parse` must skip it exactly as it skips '-'.
+    func testParsesLeadingPlusSign() {
+        XCTAssertEqual(PluginDisplay.parse("+24.0 dB"), .init(number: 24.0, unit: "dB", raw: "+24.0 dB"))
+        XCTAssertEqual(PluginDisplay.parse("+6 dB"),    .init(number: 6.0,  unit: "dB", raw: "+6 dB"))
+    }
     func testBareNumberHasEmptyUnit() {
         XCTAssertEqual(PluginDisplay.parse("1.00"), .init(number: 1.0, unit: "", raw: "1.00"))
         XCTAssertEqual(PluginDisplay.parse("100L"), .init(number: 100, unit: "L", raw: "100L"))
