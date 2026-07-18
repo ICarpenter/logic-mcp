@@ -16,7 +16,7 @@ final class AXConvergerTests: XCTestCase {
         p.onSetNumber = { n, raw in if n === slider { group.stringValue = map(raw) } }
         let bridge = AXBridge(provider: p)
         // Resolve handles by walking the bridge's provider view.
-        let handles = try await bridge.childHandlesForTest(of: bridge.rootForTest())
+        let handles = await bridge.childHandlesForTest(of: bridge.rootForTest())
         return (bridge, handles.slider, handles.display)
     }
 

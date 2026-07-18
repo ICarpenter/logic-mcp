@@ -387,7 +387,11 @@ public actor AXBridge {
     /// (`settledValue`) — an immediate post-write read can be stale (ax-findings.md).
     private func convergeByBisection(slider: AXHandle, disp: () -> Double?, lo: Double, hi: Double,
                                      target: Double, tolerance: Double) async throws -> Double? {
-        try p.setNumber(lo, of: slider); _ = await settledValue(of: slider, unlessChangedFrom: nil)
+        // Seed against the real pre-write raw, not nil — settledValue's "now != prior" check is
+        // vacuously true when prior is nil, so it would return immediately without polling and
+        // dLo could be read stale on Logic's async writes (review fix).
+        let before0 = p.number(of: slider)
+        try p.setNumber(lo, of: slider); _ = await settledValue(of: slider, unlessChangedFrom: before0)
         guard let dLo = disp() else { return nil }
         try p.setNumber(hi, of: slider); _ = await settledValue(of: slider, unlessChangedFrom: lo)
         guard let dHi = disp() else { return nil }
