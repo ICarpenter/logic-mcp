@@ -450,6 +450,57 @@ final class AXPluginToolTests: XCTestCase {
         } catch let f as ToolFailure { XCTAssertTrue(f.expected?.contains("Vintage") ?? false) }
     }
 
+    /// Same shape as `makeEnumProvider()`, but the popup's displayed `.value` updates
+    /// ASYNCHRONOUSLY after the menu-item press — models real Logic (2026-07-15 live measurement):
+    /// pressing a menu item DOES commit the selection, but the AXPopUpButton's `value` string only
+    /// flips to the new choice ~400ms later. `afterReads: 3` means a single immediate `.value` read
+    /// right after the press still sees the stale prior value; only a settle-poll of repeated reads
+    /// drains the countdown and reveals the new choice.
+    private func makeLaggedEnumProvider() -> (FakeAXProvider, popup: FakeAXNode) {
+        let popup = FakeAXNode(role: "AXPopUpButton", stringValue: "Standard")
+        let items = ["Standard", "Vintage", "Old"].map { title -> FakeAXNode in
+            let item = FakeAXNode(role: "AXMenuItem", title: title)
+            item.onPress = { popup.scheduleValue(title, afterReads: 3) }
+            return item
+        }
+        popup.children = [FakeAXNode(role: "AXMenu", children: items)]
+        let cell = FakeAXNode(role: "AXCell", children: [
+            FakeAXNode(role: "AXStaticText", stringValue: "Tape Type:"),
+            FakeAXNode(role: "AXGroup", stringValue: "Standard"), popup])
+        let table = FakeAXNode(role: "AXTable",
+            children: [FakeAXNode(role: "AXRow", subrole: "AXTableRow", children: [cell])])
+        let viewBtn = FakeAXNode(role: "AXMenuButton", description: "view", title: "Controls")
+        let close = FakeAXNode(role: "AXButton", description: "close")
+        let window = FakeAXNode(role: "AXWindow", title: "vox", children: [
+            close, viewBtn, FakeAXNode(role: "AXScrollArea", children: [table])])
+        close.closesWindow = window
+        let open = FakeAXNode(role: "AXButton", description: "open"); open.opensWindow = window
+        let eqGroup = FakeAXNode(role: "AXGroup", description: "Tape", children: [open])
+        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
+            FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute", stringValue: "off"), eqGroup])
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [
+            FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer", children: [area])]))
+        return (p, popup)
+    }
+
+    /// Locks the smoke-found real-Logic bug: `set_plugin_option` reported `verified:false` even
+    /// though the enum selection succeeded, because Logic updates the popup's displayed value
+    /// ASYNCHRONOUSLY (~400ms live) after the item press, and the tool's verify re-read the popup
+    /// before that landed. `selectEnumChoice` must settle-poll the popup's own value until it
+    /// changes from its pre-selection value (or a deadline) before returning, so the caller's verify
+    /// only ever observes the committed choice.
+    func testSetPluginOptionSettlesLaggedPopupValue() async throws {
+        let (p, popup) = makeLaggedEnumProvider()
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        _ = try await d.axMixer.syncTracks()
+        let r = try await SetPluginOptionTool(daemon: d).invoke([
+            "track": .string("vox"), "slot": .int(0), "param": .string("Tape Type"), "choice": .string("Vintage")])
+        guard case .object(let o) = r else { return XCTFail() }
+        XCTAssertEqual(o["verified"], .bool(true), "selectEnumChoice must wait for the lagged popup value before returning")
+        XCTAssertEqual(popup.stringValue, "Vintage")
+    }
+
     /// Regression for the live opaque:true race: the Controls AXTable populates async after the view
     /// switch. `settledControlTable` must poll past the empty reads; a single `controlTable` sees [].
     func testSettledControlTablePollsPastEmptyReads() async throws {

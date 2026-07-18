@@ -190,6 +190,7 @@ public actor AXMenuDriver {
     /// popup (AXCancel) on any throw path — including a failed final press. The TOOL re-reads the popup's
     /// value afterwards as the independent oracle.
     public func selectEnumChoice(from popup: AXHandle, choice: String) async throws {
+        let priorValue = p.string(.value, of: popup)      // captured BEFORE opening — the settle-poll's baseline
         try? p.perform(.press, on: popup)                 // open it (return code unreliable — read the tree)
         try? await Task.sleep(for: .milliseconds(40))
         let items = menuItems(under: popup)
@@ -208,6 +209,15 @@ public actor AXMenuDriver {
         }
         do { try p.perform(.press, on: hit) }
         catch { try? p.perform(.cancel, on: popup); throw error }
+
+        // Logic updates the popup's displayed value ASYNCHRONOUSLY (~400ms live) after the item press —
+        // wait until it changes from the pre-selection value (or a deadline) so the caller's verify
+        // doesn't read the stale prior value. A no-op re-select (choice == current) just waits out the poll.
+        let deadline = ContinuousClock.now + .milliseconds(1500)
+        while ContinuousClock.now < deadline {
+            if p.string(.value, of: popup) != priorValue { break }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
     }
 
     /// Insert-plugin popup — SEARCH-DRIVEN (see Fixtures/ax/popup_plugin_search.txt).

@@ -89,6 +89,23 @@ final class FakeAXNode {
         self.setValueLatency = setValueLatency
     }
 
+    /// Schedules `new` to become this node's `.value` string only after `afterReads` subsequent
+    /// `.value` reads (see `readValueForLatency()`) — reuses the exact same
+    /// `pendingStringValue`/`latencyCountdown` machinery as `flipSwitchValue()`, just generalized to
+    /// an arbitrary caller-supplied value instead of an AXSwitch on/off flip. Models Logic's
+    /// asynchronous `AXPopUpButton` value commit (~400ms live) after a menu-item press lands — a
+    /// single immediate read still sees the stale prior value; only a settle-poll of repeated reads
+    /// drains the countdown and reveals `new`. Zero (or omitted) reveals immediately, matching every
+    /// other latency hook's synchronous default.
+    func scheduleValue(_ new: String, afterReads: Int) {
+        if afterReads <= 0 {
+            stringValue = new
+        } else {
+            pendingStringValue = new
+            latencyCountdown = afterReads
+        }
+    }
+
     /// Called by the provider's `.value` string read. If a press is pending latency, decrements
     /// the countdown and only reveals the flipped value once it reaches 0.
     func readValueForLatency() -> String? {
