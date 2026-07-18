@@ -292,8 +292,8 @@ final class FakeAXProvider: AXProvider, @unchecked Sendable {
         switch action {
         case .press where n.subrole == "AXSwitch":
             n.flipSwitchValue()
-        case .increment: n.numberValue = (n.numberValue ?? 0) + 10
-        case .decrement: n.numberValue = (n.numberValue ?? 0) - 10
+        case .increment: n.numberValue = (n.numberValue ?? 0) + 10; onSetNumber?(n, n.numberValue ?? 0)
+        case .decrement: n.numberValue = (n.numberValue ?? 0) - 10; onSetNumber?(n, n.numberValue ?? 0)
         case .press:
             // Simulate a plugin window opening/closing (Bug 2 regression coverage). Both are
             // nil in every other test, so this is a no-op there — unchanged prior behavior.

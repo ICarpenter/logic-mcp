@@ -104,6 +104,18 @@ public actor AXBridge {
     /// handle without a full Daemon. Safe: read-only.
     func windowsForTest() -> [AXHandle] { p.windows() }
     func titleForTest(_ h: AXHandle) -> String? { p.string(.title, of: h) }
+    /// Test-only: the provider's root, or its first window if the provider has no distinct root
+    /// (mirrors `windowsForTest`) — lets a converger test build a bare slider+display pair without
+    /// a full mixer/window tree.
+    func rootForTest() -> AXHandle { (try? p.root()) ?? p.windows()[0] }
+    /// Test-only: resolve the AXSlider and its sibling AXGroup display among `h`'s children —
+    /// the minimal shape `AXConvergerTests` builds directly, without a full Controls-view table.
+    func childHandlesForTest(of h: AXHandle) -> (slider: AXHandle, display: AXHandle) {
+        let kids = p.children(of: h)
+        let slider = kids.first { p.string(.role, of: $0) == "AXSlider" }!
+        let display = kids.first { p.string(.role, of: $0) == "AXGroup" }!
+        return (slider, display)
+    }
     func titleForViewMenuTest(_ window: AXHandle) -> String? {
         descendant(of: window, role: "AXMenuButton", description: "view").flatMap { p.string(.title, of: $0) }
     }
@@ -335,6 +347,90 @@ public actor AXBridge {
             cur = now
         }
         return liveNum()
+    }
+
+    /// How a Controls-view slider actually moves under AX — SELECTED BY THE TASK 0 LIVE PROBE.
+    /// `.absolute`: AXSetValue lands the raw at the requested value → converge by binary search.
+    /// `.step`: only AXIncrement/AXDecrement move it, by a fixed amount → converge by linear stepping.
+    public enum SliderActuation: Sendable { case absolute, step }
+
+    /// The default the tools pass. TASK 0 PROVED `.absolute`: on the vox Channel EQ Low Shelf Gain,
+    /// AXSetValue is absolute + linear (raw 0→−24 dB, 240→0 dB, 480→+24 dB). `.step` (AXIncrement/
+    /// AXDecrement, ±24 raw/step here) is implemented and tested as a fallback but is NOT the default —
+    /// it is too coarse to hit fine unit targets. See ax-findings.md 2026-07-17.
+    public static let defaultSliderActuation: SliderActuation = .absolute
+
+    /// Converge `slider` until the number parsed from `display` reaches `target` (±`tolerance`), using
+    /// the probe-proven `actuation`. The DISPLAY STRING is the sole oracle; the raw value is only a
+    /// search coordinate (never assume a raw↔unit curve — the display may be nonlinear or inverse).
+    /// Returns the achieved display number, or nil if the display is unreadable. Never fabricates: an
+    /// unreachable target returns the nearest achieved value (the caller reports verified:false).
+    public func convergeAdaptive(slider: AXHandle, display: AXHandle, target: Double,
+                                 tolerance: Double, actuation: SliderActuation,
+                                 maxSteps: Int) async throws -> Double? {
+        func disp() -> Double? { PluginDisplay.parse(p.string(.value, of: display) ?? "").number }
+        switch actuation {
+        case .absolute:
+            let (loO, hiO) = p.minMax(of: slider)
+            guard let lo = loO, let hi = hiO, hi > lo else { return nil }
+            return try await convergeByBisection(slider: slider, disp: disp, lo: lo, hi: hi,
+                                                 target: target, tolerance: tolerance)
+        case .step:
+            return try await convergeByStepping(slider: slider, disp: disp,
+                                                target: target, tolerance: tolerance, maxSteps: maxSteps)
+        }
+    }
+
+    /// Binary-search the raw against the display oracle. Establishes polarity by sampling the display
+    /// at the two rails (the display may rise OR fall with raw), then bisects toward `target`. ~40
+    /// bisections cover any practical raw range. Reads the display only after the raw SETTLES
+    /// (`settledValue`) — an immediate post-write read can be stale (ax-findings.md).
+    private func convergeByBisection(slider: AXHandle, disp: () -> Double?, lo: Double, hi: Double,
+                                     target: Double, tolerance: Double) async throws -> Double? {
+        try p.setNumber(lo, of: slider); _ = await settledValue(of: slider, unlessChangedFrom: nil)
+        guard let dLo = disp() else { return nil }
+        try p.setNumber(hi, of: slider); _ = await settledValue(of: slider, unlessChangedFrom: lo)
+        guard let dHi = disp() else { return nil }
+        let ascending = dHi >= dLo                       // does a higher raw yield a higher display?
+        var loR = lo, hiR = hi
+        var best = disp()
+        for _ in 0..<40 {
+            let mid = (loR + hiR) / 2
+            let before = p.number(of: slider)
+            try p.setNumber(mid, of: slider)
+            _ = await settledValue(of: slider, unlessChangedFrom: before)
+            guard let d = disp() else { return best }
+            best = d
+            if abs(d - target) <= tolerance { return d }
+            // Move toward the rail that pushes the display toward target, honoring polarity.
+            if (target > d) == ascending { loR = mid } else { hiR = mid }
+            if hiR - loR < 1 { break }                   // raw resolution exhausted → nearest is best
+        }
+        return best
+    }
+
+    /// Step-converge via AXIncrement/AXDecrement. One probe increment establishes the display polarity,
+    /// then steps toward `target`, re-reading the display each step. Bails honestly when the raw stops
+    /// moving (a genuine boundary) — settle-confirmed so an async-stale read isn't mistaken for stuck.
+    private func convergeByStepping(slider: AXHandle, disp: () -> Double?, target: Double,
+                                    tolerance: Double, maxSteps: Int) async throws -> Double? {
+        guard let start = disp() else { return nil }
+        let before = p.number(of: slider)
+        try p.perform(.increment, on: slider)
+        _ = await settledValue(of: slider, unlessChangedFrom: before)
+        guard var cur = disp() else { return nil }
+        let ascending = cur >= start                     // did the display rise on one increment?
+        for _ in 0..<maxSteps {
+            if abs(cur - target) <= tolerance { return cur }
+            let up = (target > cur) == ascending
+            let rawBefore = p.number(of: slider)
+            try p.perform(up ? .increment : .decrement, on: slider)
+            let settled = await settledValue(of: slider, unlessChangedFrom: rawBefore)
+            if settled == nil || settled == rawBefore { return disp() }   // settle-confirmed stuck
+            guard let now = disp() else { return cur }
+            cur = now
+        }
+        return disp()
     }
 
     /// Walk a Controls-view plugin window's AXTable into typed rows. Returns [] if there is no
