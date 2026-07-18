@@ -47,6 +47,21 @@ final class AXConvergerTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(got), 12, accuracy: 0.5)
     }
 
+    /// Real Logic formats POSITIVE dB with an explicit leading '+' (e.g. "+24.0 dB") but negative/zero
+    /// without one (e.g. "-3.0 dB", "0.0 dB"). Before the PluginDisplay fix, the high-rail probe here
+    /// reads "+24.0 dB", PluginDisplay.parse returns number:nil, and convergeByBisection's
+    /// `guard let dHi = disp() else { return nil }` bails — stranding the slider at the +24 dB rail
+    /// with the target (-3) never reached. Reverting the PluginDisplay fix turns this RED.
+    func testBinarySearchConvergesThroughPlusSignedRail() async throws {
+        let (bridge, s, d) = try await makeSliderBridge(min: 0, max: 480, start: 240, stepMode: false) {
+            let dB = ($0 - 240) / 10
+            return dB >= 0 ? "+\(dB) dB" : "\(dB) dB"
+        }
+        let got = try await bridge.convergeAdaptive(slider: s, display: d, target: -3,
+                                                    tolerance: 0.5, actuation: .absolute, maxSteps: 1000)
+        XCTAssertEqual(try XCTUnwrap(got), -3, accuracy: 0.5)
+    }
+
     func testUnreachableTargetReturnsNearestNotFabricated() async throws {
         let (bridge, s, d) = try await makeSliderBridge(min: 0, max: 480, start: 0, stepMode: false) {
             "\(($0 - 240) / 10) dB"                // reachable dB span is -24…+24
