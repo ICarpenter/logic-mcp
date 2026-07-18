@@ -292,6 +292,8 @@ final class FakeAXProvider: AXProvider, @unchecked Sendable {
         switch action {
         case .press where n.subrole == "AXSwitch":
             n.flipSwitchValue()
+        case .press where n.role == "AXCheckBox":
+            n.stringValue = (n.stringValue == "1") ? "0" : "1"
         case .increment: n.numberValue = (n.numberValue ?? 0) + 10; onSetNumber?(n, n.numberValue ?? 0)
         case .decrement: n.numberValue = (n.numberValue ?? 0) - 10; onSetNumber?(n, n.numberValue ?? 0)
         case .press:

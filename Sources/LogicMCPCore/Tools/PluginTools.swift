@@ -286,3 +286,48 @@ public struct SetPluginOptionTool: LogicTool {
         return .object(["param": .string(target.name), "display": .string(now), "verified": .bool(verified)])
     }
 }
+
+public struct PressPluginControlTool: LogicTool {
+    public let name = "press_plugin_control"
+    public let description = "Press or toggle a plugin's non-knob control (an in-table checkbox, or a header button) by name, via Logic's Controls view. Verifies the new state where the control exposes one. Use set_plugin_param for sliders and set_plugin_option for enum popups."
+    public let inputSchema = trackArgSchema([
+        "slot": .object(["type": .string("integer")]),
+        "param": .object(["type": .string("string"), "description": .string("Control name (prefix ok) or integer index")]),
+    ], required: ["slot", "param"])
+    let daemon: Daemon
+
+    public func invoke(_ args: [String: Value]) async throws -> Value {
+        let trackName = try requireString(args, "track", tool: name)
+        guard let slot = args["slot"]?.coercedInt, (0...127).contains(slot) else {
+            throw ToolFailure(error: "'slot' must be an integer in 0…127", layer: "daemon")
+        }
+        let paramKey = args["param"]?.stringValue ?? args["param"]?.coercedInt.map(String.init)
+        guard let paramKey else { throw ToolFailure(error: "missing required argument 'param'", layer: "daemon") }
+
+        let (name, _, controls) = try await axEnterPluginControls(daemon, trackName: trackName, slot: slot)
+        guard !controls.isEmpty else {
+            throw ToolFailure(error: "plugin exposes no addressable parameters", layer: "ax",
+                              expected: "an addressable Controls-view control", observed: "opaque plugin")
+        }
+        let wanted = paramKey.lowercased()
+        let target = controls.first { $0.name.lowercased().hasPrefix(wanted) }
+            ?? Int(paramKey).flatMap { i in (0..<controls.count).contains(i) ? controls[i] : nil }
+        guard let target else {
+            throw ToolFailure(error: "no control '\(paramKey)'", layer: "ax",
+                              expected: controls.map(\.name).joined(separator: ", "), observed: "no match")
+        }
+        guard target.kind == .toggle else {
+            throw ToolFailure(error: "control '\(target.name)' is a \(target.kind.rawValue) — use \(target.kind == .slider ? "set_plugin_param" : "set_plugin_option")",
+                              layer: "ax", expected: "a pressable toggle/button", observed: "kind \(target.kind.rawValue)")
+        }
+        let before = target.display ?? ""
+        try await daemon.ax.press(target.handle)
+        // Oracle: re-open + re-walk (settled) and confirm the toggle's value changed.
+        let (_, _, after) = try await axEnterPluginControls(daemon, trackName: trackName, slot: slot)
+        let now = after.first { $0.name == target.name }?.display ?? ""
+        await daemon.journal.record(MixMutation(
+            tool: "press_plugin_control", track: name, undoArguments: nil,
+            descriptionText: "\(name) \(target.name) → \(now)"))
+        return .object(["param": .string(target.name), "display": .string(now), "verified": .bool(now != before)])
+    }
+}

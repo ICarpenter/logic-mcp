@@ -472,4 +472,26 @@ final class AXPluginToolTests: XCTestCase {
         let settled = await bridge.settledControlTable(in: handle)
         XCTAssertEqual(settled.map(\.name), ["Gain"], "settledControlTable polls until the row populates")
     }
+
+    func testPressPluginControlTogglesCheckbox() async throws {
+        let (p, _, _) = makeMixedKindProvider()          // rows: slider A, toggle B ("0"), slider C
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        _ = try await d.axMixer.syncTracks()
+        let r = try await PressPluginControlTool(daemon: d).invoke([
+            "track": .string("vox"), "slot": .int(0), "param": .string("B")])
+        guard case .object(let o) = r else { return XCTFail() }
+        XCTAssertEqual(o["display"], .string("1"), "the checkbox flipped 0→1")
+        XCTAssertEqual(o["verified"], .bool(true))
+    }
+
+    func testPressPluginControlRejectsSlider() async throws {
+        let (p, _, _) = makeMixedKindProvider()
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        _ = try await d.axMixer.syncTracks()
+        do {
+            _ = try await PressPluginControlTool(daemon: d).invoke([
+                "track": .string("vox"), "slot": .int(0), "param": .string("A")])
+            XCTFail("expected a wrong-kind ToolFailure for a slider")
+        } catch let f as ToolFailure { XCTAssertTrue(f.error.contains("set_plugin_param")) }
+    }
 }
