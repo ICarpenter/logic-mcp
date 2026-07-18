@@ -175,10 +175,24 @@ public struct SetPluginParamTool: LogicTool {
         // slider — an integer index landing on a toggle/popup is "no match", not a silent misuse.
         let sliders = controls.filter { $0.kind == .slider }
         let wanted = paramKey.lowercased()
-        let target = sliders.first { $0.name.lowercased().hasPrefix(wanted) }
-            ?? Int(paramKey).flatMap { i in (0..<controls.count).contains(i) ? controls[i] : nil }
-                .flatMap { $0.kind == .slider ? $0 : nil }
-        guard let target else {
+        let byIndex = Int(paramKey).flatMap { i in (0..<controls.count).contains(i) ? controls[i] : nil }
+        // An integer index resolves against the FULL control list (see comment above), so it can
+        // land on a toggle/popup. Previously that was silently pruned to `nil` via
+        // `.flatMap { $0.kind == .slider ? $0 : nil }` and fell through to the generic "no
+        // parameter" error below — indistinguishable from a genuinely out-of-range index, and
+        // pointing the caller nowhere useful. Surface it as its own "wrong control kind" error
+        // instead, ahead of the generic miss, so `set_plugin_param(param:"1")` against a toggle
+        // says so rather than claiming no such parameter exists.
+        let target: PluginControl
+        if let named = sliders.first(where: { $0.name.lowercased().hasPrefix(wanted) }) {
+            target = named
+        } else if let byIndex {
+            guard byIndex.kind == .slider else {
+                throw ToolFailure(error: "parameter '\(byIndex.name)' is not a settable slider (it is a \(byIndex.kind.rawValue)) — use the tool for that control kind instead",
+                                  layer: "ax", expected: "a settable slider", observed: "kind: \(byIndex.kind.rawValue)")
+            }
+            target = byIndex
+        } else {
             throw ToolFailure(error: "no parameter '\(paramKey)'", layer: "ax",
                               expected: sliders.map(\.name).joined(separator: ", "), observed: "no match")
         }
@@ -202,8 +216,9 @@ public struct SetPluginParamTool: LogicTool {
         if let unitStr = args["value"]?.stringValue, PluginDisplay.parse(unitStr).number != nil {
             // Unit target: converge against the display-string oracle.
             let goal = PluginDisplay.parse(unitStr).number!
-            let achieved = try await daemon.ax.convergeToDisplay(
-                slider: target.handle, display: displayHandle, target: goal, tolerance: 0.5, maxSteps: steps)
+            let achieved = try await daemon.ax.convergeAdaptive(
+                slider: target.handle, display: displayHandle, target: goal, tolerance: 0.5,
+                actuation: AXBridge.defaultSliderActuation, maxSteps: steps)
             verified = achieved.map { abs($0 - goal) <= 0.5 } ?? false
         } else if let norm = args["value"]?.coercedDouble, (0.0...1.0).contains(norm) {
             // Normalized target: map onto the slider's raw range and nudge there.

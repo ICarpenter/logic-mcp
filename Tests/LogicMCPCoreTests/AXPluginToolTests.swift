@@ -117,7 +117,7 @@ final class AXPluginToolTests: XCTestCase {
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
         let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [
             FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer", children: [area])]))
-        p.nudgeMode = true
+        p.nudgeMode = false   // Task 0 default: AXSetValue is absolute on Controls-view sliders
         p.onSetNumber = { node, raw in
             if node === bass { group.stringValue = "\(Int(raw / 100)) %" }   // display follows raw
         }
@@ -174,7 +174,7 @@ final class AXPluginToolTests: XCTestCase {
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
         let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [
             FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer", children: [area])]))
-        p.nudgeMode = true
+        p.nudgeMode = false   // Task 0 default: AXSetValue is absolute on Controls-view sliders
         return (p, a: a, c: c)
     }
 
@@ -191,14 +191,31 @@ final class AXPluginToolTests: XCTestCase {
         XCTAssertEqual(raw, 5, accuracy: 1)   // 0.5 normalized over 0…10 → midpoint 5
     }
 
-    /// Regression for `convergeToDisplay`'s settle-poll guard (`settledValue`): real Logic updates
-    /// a plugin slider's raw AX value ASYNCHRONOUSLY after `AXSetValue` (ax-findings.md) — an
-    /// immediate re-read can return the stale pre-write value, indistinguishable from a genuine
-    /// stuck boundary. `setValueLatency` on the target slider models exactly that: it holds the
-    /// new raw value back for one subsequent `number(of:)` read. Range kept tiny (0…6) so the test
-    /// only pays the guard's 30ms poll a handful of times rather than thousands.
+    /// set_plugin_param must REFUSE a param that resolves to a non-slider (a toggle/popup), pointing
+    /// the caller at the right tool — never silently mis-actuate.
+    func testSetPluginParamRejectsToggleKind() async throws {
+        let (p, _, _) = makeMixedKindProvider()          // rows: slider A, toggle B, slider C
+        p.nudgeMode = false
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        _ = try await d.axMixer.syncTracks()
+        do {
+            _ = try await SetPluginParamTool(daemon: d).invoke([
+                "track": .string("vox"), "slot": .int(0), "param": .string("1"), "value": .double(0.5)])
+            XCTFail("expected a wrong-kind ToolFailure for the toggle at index 1")
+        } catch let f as ToolFailure {
+            XCTAssertTrue(f.error.contains("not a settable slider") || f.error.contains("wrong control kind"))
+        }
+    }
+
+    /// Regression for `convergeAdaptive`/`convergeByBisection`'s settle-poll guard (`settledValue`):
+    /// real Logic updates a plugin slider's raw AX value ASYNCHRONOUSLY after `AXSetValue`
+    /// (ax-findings.md) — an immediate re-read can return the stale pre-write value,
+    /// indistinguishable from a genuine stuck boundary. `setValueLatency` on the target slider
+    /// models exactly that: it holds the new raw value back for one subsequent `number(of:)` read.
+    /// Range kept tiny (0…6) so the test only pays the guard's 30ms poll a handful of times rather
+    /// than thousands.
     /// SUCCESS CRITERION (verified manually per the brief): this test goes RED if the `settledValue`
-    /// poll loop is deleted from `convergeToDisplay`'s stuck-check (an unguarded single read sees
+    /// poll loop is deleted from `convergeByBisection`'s stuck-check (an unguarded single read sees
     /// the stale raw on the very first nudge, misreads it as "stuck", and bails with the display
     /// still at 1% instead of the 3% target — `verified` becomes false).
     func testSetPluginParamUnitTargetSettlesAsyncSliderReadback() async throws {
@@ -222,7 +239,7 @@ final class AXPluginToolTests: XCTestCase {
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
         let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [
             FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer", children: [area])]))
-        p.nudgeMode = true
+        p.nudgeMode = false   // Task 0 default: AXSetValue is absolute on Controls-view sliders
         // Display tracks the raw 1:1 (unlike makeConvergingProvider's /100) so a handful of
         // nudges is enough to reach the target — keeps the test's real 30ms settle-polls brief.
         p.onSetNumber = { node, raw in
@@ -239,7 +256,7 @@ final class AXPluginToolTests: XCTestCase {
         XCTAssertEqual(raw, 3, accuracy: 1)
     }
 
-    /// The normalized-0–1 branch (`nudgeToRaw`), distinct from the unit-string `convergeToDisplay`
+    /// The normalized-0–1 branch (`nudgeToRaw`), distinct from the unit-string `convergeAdaptive`
     /// path above: a plain JSON number (`.double`, not a string) maps onto the slider's raw range.
     func testSetPluginParamNormalizedValueConvergesToRawMidpoint() async throws {
         let (p, bass) = makeConvergingProvider()   // minMax 0…10000

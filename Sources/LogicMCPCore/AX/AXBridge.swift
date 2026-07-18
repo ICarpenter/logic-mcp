@@ -313,42 +313,6 @@ public actor AXBridge {
             try? await Task.sleep(for: .milliseconds(30))
         }
     }
-    /// Nudge `slider` until the number parsed from `display`'s value string reaches `target`
-    /// (±`tolerance`) or stalls. Assumes the display increases with the raw value (holds for the
-    /// stock/third-party params probed 2026-07-15).
-    ///
-    /// The display is often COARSER than the raw slider (e.g. a 0…10000 raw range showing a
-    /// 0…100 % readout) — each `AXSetValue` nudge moves the RAW value by exactly one unit
-    /// (ax-findings.md), which frequently leaves the DISPLAY STRING unchanged for many
-    /// consecutive nudges. So "stuck" is detected on the RAW value not progressing between
-    /// nudges (a genuine boundary/no-op), never on the display looking unchanged after a single
-    /// nudge — the latter would misfire on the very first step for any coarse display and abort
-    /// before the raw value could travel far enough to move it.
-    ///
-    /// The post-nudge raw read goes through `settledValue` for the SAME reason `nudgeToRaw` and
-    /// `axConvergeVolume` do: `AXUIElementSetAttributeValue` updates a Logic slider ASYNCHRONOUSLY,
-    /// so an immediate re-read can return the STALE pre-write value — indistinguishable from a
-    /// genuine min/max boundary — and bail the loop early with the param stuck partway. `settledValue`
-    /// polls briefly before concluding the raw genuinely didn't move. The display string stays the
-    /// TARGET/convergence oracle. Returns the achieved display number, or nil if it's unreadable.
-    public func convergeToDisplay(slider: AXHandle, display: AXHandle, target: Double,
-                                  tolerance: Double, maxSteps: Int) async throws -> Double? {
-        let (loO, hiO) = minMax(of: slider)
-        guard let lo = loO, let hi = hiO, hi > lo else { return nil }
-        func liveNum() -> Double? { PluginDisplay.parse(p.string(.value, of: display) ?? "").number }
-        guard var cur = liveNum() else { return nil }
-        for _ in 0..<maxSteps {
-            if abs(cur - target) <= tolerance { return cur }
-            let rawBefore = p.number(of: slider)
-            try p.setNumber(cur < target ? hi : lo, of: slider)   // one nudge toward target
-            let settled = await settledValue(of: slider, unlessChangedFrom: rawBefore)
-            if settled == nil || settled == rawBefore { return liveNum() }   // settle-confirmed stuck
-            guard let now = liveNum() else { return nil }
-            cur = now
-        }
-        return liveNum()
-    }
-
     /// How a Controls-view slider actually moves under AX — SELECTED BY THE TASK 0 LIVE PROBE.
     /// `.absolute`: AXSetValue lands the raw at the requested value → converge by binary search.
     /// `.step`: only AXIncrement/AXDecrement move it, by a fixed amount → converge by linear stepping.
