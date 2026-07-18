@@ -501,6 +501,61 @@ final class AXPluginToolTests: XCTestCase {
         XCTAssertEqual(popup.stringValue, "Vintage")
     }
 
+    /// Same shape as `makeEnumProvider()`, but the popup's `AXMenu` child (carrying the items) is
+    /// ABSENT at press time and only appears after a few `children(of: popup)` reads — models the
+    /// smoke-found real-Logic bug (2026-07-16): the enum's AXMenu populates ASYNCHRONOUSLY (~100ms)
+    /// after the popup is pressed. The OLD `selectEnumChoice` read `menuItems(under: popup)` once
+    /// after a FIXED 40ms sleep; on a busy Logic instance that single read landed before the AXMenu
+    /// appeared, saw ZERO items, and threw a spurious "no choice '<x>'  expected: one of: " (an EMPTY
+    /// choice list) even though the choice was perfectly valid. `afterReads: 3` means three
+    /// `children(of: popup)` reads still see no AXMenu; only the fourth reveals it — same idiom as
+    /// `testSettledControlTablePollsPastEmptyReads`'s `scheduleChildAppend` for this bug class.
+    private func makeMenuPopulateLatencyEnumProvider() -> (FakeAXProvider, popup: FakeAXNode) {
+        let popup = FakeAXNode(role: "AXPopUpButton", stringValue: "Standard")
+        let items = ["Standard", "Vintage", "Old"].map { title -> FakeAXNode in
+            let item = FakeAXNode(role: "AXMenuItem", title: title)
+            item.onPress = { popup.stringValue = title }
+            return item
+        }
+        let menuNode = FakeAXNode(role: "AXMenu", children: items)
+        // NO AXMenu child yet — models the pre-populate gap. Revealed only after 3 stale reads.
+        popup.scheduleChildAppend(menuNode, afterReads: 3)
+        let cell = FakeAXNode(role: "AXCell", children: [
+            FakeAXNode(role: "AXStaticText", stringValue: "Tape Type:"),
+            FakeAXNode(role: "AXGroup", stringValue: "Standard"), popup])
+        let table = FakeAXNode(role: "AXTable",
+            children: [FakeAXNode(role: "AXRow", subrole: "AXTableRow", children: [cell])])
+        let viewBtn = FakeAXNode(role: "AXMenuButton", description: "view", title: "Controls")
+        let close = FakeAXNode(role: "AXButton", description: "close")
+        let window = FakeAXNode(role: "AXWindow", title: "vox", children: [
+            close, viewBtn, FakeAXNode(role: "AXScrollArea", children: [table])])
+        close.closesWindow = window
+        let open = FakeAXNode(role: "AXButton", description: "open"); open.opensWindow = window
+        let eqGroup = FakeAXNode(role: "AXGroup", description: "Tape", children: [open])
+        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
+            FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute", stringValue: "off"), eqGroup])
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [
+            FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer", children: [area])]))
+        return (p, popup)
+    }
+
+    /// Locks the smoke-found real-Logic bug: `set_plugin_option` intermittently failed with
+    /// "no choice '<x>'  expected: one of: " (an EMPTY list) when Logic was busy, because
+    /// `selectEnumChoice` read the popup's `AXMenu` after a FIXED 40ms sleep instead of settle-polling
+    /// for it to populate (~100ms live). `selectEnumChoice` must poll `menuItems` until they appear
+    /// (or a ~1s deadline) rather than reading once.
+    func testSetPluginOptionSettlesMenuPopulateLatency() async throws {
+        let (p, popup) = makeMenuPopulateLatencyEnumProvider()
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        _ = try await d.axMixer.syncTracks()
+        let r = try await SetPluginOptionTool(daemon: d).invoke([
+            "track": .string("vox"), "slot": .int(0), "param": .string("Tape Type"), "choice": .string("Vintage")])
+        guard case .object(let o) = r else { return XCTFail() }
+        XCTAssertEqual(o["verified"], .bool(true), "selectEnumChoice must settle-poll past the empty-menu reads")
+        XCTAssertEqual(popup.stringValue, "Vintage")
+    }
+
     /// Regression for the live opaque:true race: the Controls AXTable populates async after the view
     /// switch. `settledControlTable` must poll past the empty reads; a single `controlTable` sees [].
     func testSettledControlTablePollsPastEmptyReads() async throws {

@@ -192,8 +192,14 @@ public actor AXMenuDriver {
     public func selectEnumChoice(from popup: AXHandle, choice: String) async throws {
         let priorValue = p.string(.value, of: popup)      // captured BEFORE opening — the settle-poll's baseline
         try? p.perform(.press, on: popup)                 // open it (return code unreliable — read the tree)
-        try? await Task.sleep(for: .milliseconds(40))
-        let items = menuItems(under: popup)
+        // The AXMenu populates ASYNCHRONOUSLY after the press (~100ms live, not the old fixed 40ms which
+        // read an empty menu when Logic was busy) — settle-poll until items appear or a deadline.
+        var items = menuItems(under: popup)
+        let itemsDeadline = ContinuousClock.now + .milliseconds(1000)
+        while items.isEmpty && ContinuousClock.now < itemsDeadline {
+            try? await Task.sleep(for: .milliseconds(50))
+            items = menuItems(under: popup)
+        }
         let c = choice.lowercased()
         func title(_ h: AXHandle) -> String { (p.string(.title, of: h) ?? "").lowercased() }
         // Prefer an EXACT match; only fall back to tolerant prefix matching (for abbreviated item
