@@ -357,8 +357,15 @@ public actor AXBridge {
         let before0 = p.number(of: slider)
         try p.setNumber(lo, of: slider); _ = await settledValue(of: slider, unlessChangedFrom: before0)
         guard let dLo = disp() else { return nil }
+        // The target may already sit at (or within tolerance of) the LOW rail — e.g. undo driving
+        // a slider back to its documented minimum/"off" state. Don't blindly probe the high rail
+        // and bisect back toward it: on a coarse/quantized display, the bisection loop below stops
+        // as soon as ANY raw in a wide neighborhood reads within tolerance, which can strand the
+        // raw far from the true rail even though the display already matched at `lo`.
+        if abs(dLo - target) <= tolerance { return dLo }
         try p.setNumber(hi, of: slider); _ = await settledValue(of: slider, unlessChangedFrom: lo)
         guard let dHi = disp() else { return nil }
+        if abs(dHi - target) <= tolerance { return dHi }   // same reasoning at the HIGH rail
         let ascending = dHi >= dLo                       // does a higher raw yield a higher display?
         var loR = lo, hiR = hi
         var best = disp()

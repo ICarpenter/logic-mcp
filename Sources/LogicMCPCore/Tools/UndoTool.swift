@@ -2,7 +2,7 @@ import MCP
 
 public struct UndoLastTool: LogicTool {
     public let name = "undo_last"
-    public let description = "Undo the last n mix mutations made through this daemon by restoring their prior values over the MCU wire. Plugin-param changes cannot be deterministically restored and are reported as skipped."
+    public let description = "Undo the last n mix mutations made through this daemon by restoring their prior values. Plugin params/options/toggles are re-driven to their prior state via the Controls view; a mutation with no recorded prior is reported as skipped."
     public let inputSchema: Value = .object([
         "type": .string("object"),
         "properties": .object(["n": .object(["type": .string("integer"), "default": .int(1), "minimum": .int(0)])]),

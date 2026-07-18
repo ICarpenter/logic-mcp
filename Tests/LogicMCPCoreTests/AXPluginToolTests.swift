@@ -494,4 +494,19 @@ final class AXPluginToolTests: XCTestCase {
             XCTFail("expected a wrong-kind ToolFailure for a slider")
         } catch let f as ToolFailure { XCTAssertTrue(f.error.contains("set_plugin_param")) }
     }
+
+    /// A set_plugin_param followed by undo_last must return the slider to its prior display value,
+    /// via OUR journal (undo_last), not Logic's Edit▸Undo — the smoke's wrong-thing-undone hazard.
+    func testUndoLastReversesSetPluginParam() async throws {
+        let (p, bass) = makeConvergingProvider()         // display = raw/100 %, starts at 0 %
+        p.nudgeMode = false
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        let registry = ToolRegistry(); await d.registerAllTools(in: registry)
+        _ = try await d.axMixer.syncTracks()
+        _ = try await SetPluginParamTool(daemon: d).invoke([
+            "track": .string("vox"), "slot": .int(0), "param": .string("Bass"), "value": .string("25 %")])
+        XCTAssertEqual(try XCTUnwrap(bass.numberValue), 2500, accuracy: 1)
+        _ = try await UndoLastTool(daemon: d, registry: registry).invoke(["n": .int(1)])
+        XCTAssertEqual(try XCTUnwrap(bass.numberValue), 0, accuracy: 1, "undo_last re-drove the slider to its prior 0 %")
+    }
 }

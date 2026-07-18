@@ -200,6 +200,11 @@ public struct SetPluginParamTool: LogicTool {
             throw ToolFailure(error: "parameter '\(target.name)' is not a settable slider", layer: "ax",
                               expected: "a settable slider with a display", observed: "not settable")
         }
+        // Prior state, captured BEFORE converging, is the undo target — plugin-slider writes do
+        // not register a Logic undo entry (Task 0), so undo_last self-journals and replays this
+        // same tool with the prior display to re-drive the control back.
+        let priorDisplay = target.display ?? ""
+        let undoable = PluginDisplay.parse(priorDisplay).number != nil
 
         // Both convergence paths nudge ±1 raw unit per AXSetValue call (ax-findings.md), so the
         // step budget must scale with the slider's actual raw range — a flat cap (e.g. 600)
@@ -232,7 +237,9 @@ public struct SetPluginParamTool: LogicTool {
 
         let display = await daemon.ax.stringValue(.value, of: displayHandle) ?? ""
         await daemon.journal.record(MixMutation(
-            tool: "set_plugin_param", track: name, undoArguments: nil,
+            tool: "set_plugin_param", track: name,
+            undoArguments: undoable ? ["track": name, "slot": String(slot),
+                                       "param": target.name, "value": priorDisplay] : nil,
             descriptionText: "\(name) \(target.name) → \(display)"))
         return .object(["param": .string(target.name), "display": .string(display), "verified": .bool(verified)])
     }
@@ -273,6 +280,8 @@ public struct SetPluginOptionTool: LogicTool {
             throw ToolFailure(error: "parameter '\(target.name)' is not an enum popup — use \(target.kind == .slider ? "set_plugin_param" : "press_plugin_control")",
                               layer: "ax", expected: "an enum popup parameter", observed: "kind \(target.kind.rawValue)")
         }
+        // Prior choice, captured BEFORE selecting, is the undo target.
+        let priorChoice = target.display ?? ""
         try await daemon.menu.selectEnumChoice(from: target.handle, choice: choice)
         // Oracle: re-open + re-walk (settled) and confirm the popup display reflects `choice`. The
         // display can be verbose ("18 dB/Oct") vs an abbreviated choice ("18") — accept either containment.
@@ -281,7 +290,8 @@ public struct SetPluginOptionTool: LogicTool {
         let verified = now.range(of: choice, options: .caseInsensitive) != nil
             || choice.range(of: now, options: .caseInsensitive) != nil
         await daemon.journal.record(MixMutation(
-            tool: "set_plugin_option", track: name, undoArguments: nil,
+            tool: "set_plugin_option", track: name,
+            undoArguments: ["track": name, "slot": String(slot), "param": target.name, "choice": priorChoice],
             descriptionText: "\(name) \(target.name) → \(now)"))
         return .object(["param": .string(target.name), "display": .string(now), "verified": .bool(verified)])
     }
@@ -326,7 +336,9 @@ public struct PressPluginControlTool: LogicTool {
         let (_, _, after) = try await axEnterPluginControls(daemon, trackName: trackName, slot: slot)
         let now = after.first { $0.name == target.name }?.display ?? ""
         await daemon.journal.record(MixMutation(
-            tool: "press_plugin_control", track: name, undoArguments: nil,
+            tool: "press_plugin_control", track: name,
+            // Involutive: a toggle's own undo is another press of the same control.
+            undoArguments: ["track": name, "slot": String(slot), "param": target.name],
             descriptionText: "\(name) \(target.name) → \(now)"))
         return .object(["param": .string(target.name), "display": .string(now), "verified": .bool(now != before)])
     }
