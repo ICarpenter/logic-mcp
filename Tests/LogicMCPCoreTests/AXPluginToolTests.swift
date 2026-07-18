@@ -380,4 +380,27 @@ final class AXPluginToolTests: XCTestCase {
         for w in ws where await bridge.titleForTest(w) == title { return w }
         throw XCTSkip("no window '\(title)'")
     }
+
+    /// Regression for the live opaque:true race: the Controls AXTable populates async after the view
+    /// switch. `settledControlTable` must poll past the empty reads; a single `controlTable` sees [].
+    func testSettledControlTablePollsPastEmptyReads() async throws {
+        let slider = FakeAXNode(role: "AXSlider", value: 240, settable: true, minValue: 0, maxValue: 480)
+        let cell = FakeAXNode(role: "AXCell", children: [
+            FakeAXNode(role: "AXStaticText", stringValue: "Gain:"),
+            FakeAXNode(role: "AXGroup", stringValue: "0.0 dB"), slider])
+        let row = FakeAXNode(role: "AXRow", subrole: "AXTableRow", children: [cell])
+        let table = FakeAXNode(role: "AXTable")                 // starts EMPTY
+        table.scheduleChildAppend(row, afterReads: 2)           // row appears only after 2 children reads
+        let window = FakeAXNode(role: "AXWindow", title: "vox", children: [
+            FakeAXNode(role: "AXButton", description: "close"),
+            FakeAXNode(role: "AXMenuButton", description: "view", title: "Controls"),
+            FakeAXNode(role: "AXScrollArea", children: [table])])
+        let bridge = AXBridge(provider: FakeAXProvider(root:
+            FakeAXNode(role: "AXApplication", children: [window])))
+        let handle = try await firstWindowHandle(bridge, title: "vox")
+        let firstRead = await bridge.controlTable(in: handle)
+        XCTAssertTrue(firstRead.isEmpty, "first single read sees the empty table")
+        let settled = await bridge.settledControlTable(in: handle)
+        XCTAssertEqual(settled.map(\.name), ["Gain"], "settledControlTable polls until the row populates")
+    }
 }

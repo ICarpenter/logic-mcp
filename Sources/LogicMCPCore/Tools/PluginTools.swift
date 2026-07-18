@@ -120,7 +120,7 @@ func axEnterPluginControls(_ daemon: Daemon, trackName: String, slot: Int) async
                           expected: "an open plugin window titled '\(name)'", observed: "no plugin window")
     }
     try await daemon.ax.switchToControlsView(window)
-    let controls = await daemon.ax.controlTable(in: window)
+    let controls = await daemon.ax.settledControlTable(in: window)
     return (name, window, controls)
 }
 

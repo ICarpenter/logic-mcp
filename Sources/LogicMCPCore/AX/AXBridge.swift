@@ -462,4 +462,18 @@ public actor AXBridge {
         }
         return out
     }
+
+    /// Poll `controlTable(in:)` until it yields rows or a ~1s deadline — the Controls-view AXTable
+    /// populates ASYNCHRONOUSLY after `switchToControlsView` (real Logic, 2026-07-17: get_plugin_params
+    /// intermittently returned opaque:true because a single-shot read beat the populate). Returns [] only
+    /// if still empty after the deadline (a genuinely opaque plugin). Same settle discipline as
+    /// `settledValue`; the cost is paid only when the table looks empty (rare).
+    public func settledControlTable(in window: AXHandle) async -> [PluginControl] {
+        let deadline = ContinuousClock.now + .seconds(1)
+        while true {
+            let rows = controlTable(in: window)
+            if !rows.isEmpty || ContinuousClock.now >= deadline { return rows }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+    }
 }
