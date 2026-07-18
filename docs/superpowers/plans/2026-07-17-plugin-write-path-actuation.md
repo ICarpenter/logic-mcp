@@ -14,7 +14,7 @@
 - **No-focus invariant.** Providers/tools MUST NOT activate Logic or set it frontmost. Drive everything through AX press/read.
 - **Never trust a handle across a mutation.** After any press/open, re-resolve by name via a fresh walk — the codebase's #1 bug class. Settle-poll; never reuse a pre-mutation handle.
 - **Verify against an independent oracle.** For a slider, the oracle is the row's display string; report `verified:false` rather than fabricate a value. Never fabricate `verified:true`.
-- **The actuation primitive is probe-gated.** `AXSetValue` on Controls-view Cocoa sliders does NOT behave like the mixer fader (2026-07-16 smoke: `setNumber(min)` drove the display to *max*). Task 0's live probe decides whether the converger defaults to `.absolute` (binary-search) or `.step` (increment/decrement). Both are implemented and tested; Task 0 only selects the default value of `defaultSliderActuation`.
+- **The actuation primitive (Task 0, SETTLED 2026-07-17): `AXSetValue` is ABSOLUTE + LINEAR on Controls-view sliders** — `setNumber(raw)` lands the slider at `raw` (vox Low Shelf Gain: 0→−24 dB, 240→0, 480→+24). So `defaultSliderActuation = .absolute` (binary-search the raw against the display oracle). The Plan-1 "railing" was `convergeToDisplay` setting `hi`/`lo` as a ±1 nudge and oscillating the rails, NOT a broken primitive. `.step` (AXIncrement/AXDecrement, ±24 raw/step) is implemented + tested as a fallback but is too coarse for fine targets and is not the default. See ax-findings.md 2026-07-17.
 - **Test hygiene** (memory: swift-test-gotchas): run `pkill -f xctest 2>/dev/null; perl -e 'alarm 600; exec @ARGV' swift test`. In tests that build a `FakeLogic`, retain it so `[weak self]` doesn't drop enumeration. macOS has no `timeout`; use the `perl -e 'alarm …'` wrapper.
 - **Reconnect `/mcp` after any rebuild** before live-driving Logic, or the `serve` process runs stale code (`ping` reports `stale`). See memory: logic-mcp-dev-loop.
 - **`mcp_test.logicx` is the disposable test project** — free to mutate; prefer net-zero. See memory: mcp-test-project-disposable.
@@ -32,7 +32,7 @@
 - **Modify** `Tests/LogicMCPCoreTests/FakeAXTree.swift` — `.increment`/`.decrement` fire `onSetNumber`; `.press` on an `AXCheckBox` flips `"0"`⇄`"1"`.
 - **Create** `Tests/LogicMCPCoreTests/AXConvergerTests.swift` — direct converger tests (both strategies, polarity, honest stall).
 - **Modify** `Tests/LogicMCPCoreTests/AXPluginToolTests.swift` — adapt the `set_plugin_param` tests to the new converger; add kind-mismatch, enum, press, and undo tests.
-- **Create** fixtures under `Tests/LogicMCPCoreTests/Fixtures/ax/`: `plugin_controls_channeleq.txt`, `plugin_view_menu.txt`, `plugin_enum_popup.txt` (Task 0).
+- **Create** fixtures under `Tests/LogicMCPCoreTests/Fixtures/ax/` (Task 0, DONE): `plugin_controls_channeleq.txt` (44-param Controls view), `plugin_enum_popup.txt` (plain-AXMenu enum). `plugin_view_menu.txt` was skipped — `switchToControlsView` already ships + is tested, and no new test parses it.
 - **Modify** `docs/integration-smoke.md` — append the `--plugins` write-path checklist (Task 6).
 
 ---
@@ -226,8 +226,10 @@ Add near `convergeToDisplay` (leave the old method in place for now):
 /// `.step`: only AXIncrement/AXDecrement move it, by a fixed amount → converge by linear stepping.
 public enum SliderActuation: Sendable { case absolute, step }
 
-/// The default the tools pass. SET THIS TO TASK 0's PROVEN PRIMITIVE at execution time. Both
-/// branches below are implemented and unit-tested, so this is a one-line change either way.
+/// The default the tools pass. TASK 0 PROVED `.absolute`: on the vox Channel EQ Low Shelf Gain,
+/// AXSetValue is absolute + linear (raw 0→−24 dB, 240→0 dB, 480→+24 dB). `.step` (AXIncrement/
+/// AXDecrement, ±24 raw/step here) is implemented and tested as a fallback but is NOT the default —
+/// it is too coarse to hit fine unit targets. See ax-findings.md 2026-07-17.
 public static let defaultSliderActuation: SliderActuation = .absolute
 
 /// Converge `slider` until the number parsed from `display` reaches `target` (±`tolerance`), using
@@ -323,6 +325,91 @@ git add Sources/LogicMCPCore/AX/AXBridge.swift Tests/LogicMCPCoreTests/AXConverg
 git commit -m "feat(ax): adaptive plugin-slider converger (binary-search + step, display oracle)"
 ```
 
+### Task 1b: settle-poll the Controls table (fix the intermittent `opaque:true` race)
+
+Task 0 reproduced Plan-1's deferred open-risk #3 LIVE: `get_plugin_params(vox,0)` returned
+`opaque:true, params:[]` on the first call, then a full 44 params on an immediate retry — the window
+WAS in Controls view with the `AXTable` present, but the single-shot 40 ms sleep in
+`switchToControlsView` let the table read beat the populate. Every write tool reads the table first,
+so this must be fixed or the writes/smoke flake. Fix: poll `controlTable` until it yields rows or a
+real deadline, distinguishing "still populating" from "genuinely opaque".
+
+- [ ] **Step 8: Write the failing settle-poll test**
+
+Model a table whose rows appear only after a couple of structural reads (the fake's
+`scheduleChildAppend` latency), in `AXPluginToolTests.swift`:
+
+```swift
+/// Regression for the live opaque:true race: the Controls AXTable populates async after the view
+/// switch. `settledControlTable` must poll past the empty reads; a single `controlTable` sees [].
+func testSettledControlTablePollsPastEmptyReads() async throws {
+    let slider = FakeAXNode(role: "AXSlider", value: 240, settable: true, minValue: 0, maxValue: 480)
+    let cell = FakeAXNode(role: "AXCell", children: [
+        FakeAXNode(role: "AXStaticText", stringValue: "Gain:"),
+        FakeAXNode(role: "AXGroup", stringValue: "0.0 dB"), slider])
+    let row = FakeAXNode(role: "AXRow", subrole: "AXTableRow", children: [cell])
+    let table = FakeAXNode(role: "AXTable")                 // starts EMPTY
+    table.scheduleChildAppend(row, afterReads: 2)           // row appears only after 2 children reads
+    let window = FakeAXNode(role: "AXWindow", title: "vox", children: [
+        FakeAXNode(role: "AXButton", description: "close"),
+        FakeAXNode(role: "AXMenuButton", description: "view", title: "Controls"),
+        FakeAXNode(role: "AXScrollArea", children: [table])])
+    let bridge = AXBridge(provider: FakeAXProvider(root:
+        FakeAXNode(role: "AXApplication", children: [window])))
+    let handle = try await firstWindowHandle(bridge, title: "vox")
+    XCTAssertTrue(await bridge.controlTable(in: handle).isEmpty, "first single read sees the empty table")
+    let settled = await bridge.settledControlTable(in: handle)
+    XCTAssertEqual(settled.map(\.name), ["Gain"], "settledControlTable polls until the row populates")
+}
+```
+
+- [ ] **Step 9: Run to verify failure**
+
+Run: `pkill -f xctest 2>/dev/null; perl -e 'alarm 600; exec @ARGV' swift test --filter "AXPluginToolTests/testSettledControlTablePollsPastEmptyReads"`
+Expected: FAIL — `settledControlTable` not defined.
+
+- [ ] **Step 10: Add `settledControlTable` to `AXBridge.swift`**
+
+```swift
+/// Poll `controlTable(in:)` until it yields rows or a ~1s deadline — the Controls-view AXTable
+/// populates ASYNCHRONOUSLY after `switchToControlsView` (real Logic, 2026-07-17: get_plugin_params
+/// intermittently returned opaque:true because a single-shot read beat the populate). Returns [] only
+/// if still empty after the deadline (a genuinely opaque plugin). Same settle discipline as
+/// `settledValue`; the cost is paid only when the table looks empty (rare).
+public func settledControlTable(in window: AXHandle) async -> [PluginControl] {
+    let deadline = ContinuousClock.now + .seconds(1)
+    while true {
+        let rows = controlTable(in: window)
+        if !rows.isEmpty || ContinuousClock.now >= deadline { return rows }
+        try? await Task.sleep(for: .milliseconds(50))
+    }
+}
+```
+
+- [ ] **Step 11: Route `axEnterPluginControls` through it**
+
+In `Sources/LogicMCPCore/Tools/PluginTools.swift`, in `axEnterPluginControls`, replace
+`let controls = await daemon.ax.controlTable(in: window)` with:
+
+```swift
+let controls = await daemon.ax.settledControlTable(in: window)
+```
+
+This makes `get_plugin_params`, `set_plugin_param`, and the later setters' reads all resilient to the
+populate race in one place.
+
+- [ ] **Step 12: Run the settle-poll test + full suite, then commit**
+
+Run: `pkill -f xctest 2>/dev/null; perl -e 'alarm 600; exec @ARGV' swift test --filter "AXPluginToolTests/testSettledControlTablePollsPastEmptyReads"`
+Expected: PASS.
+Run: `pkill -f xctest 2>/dev/null; perl -e 'alarm 600; exec @ARGV' swift test 2>&1 | tail -5`
+Expected: all green.
+
+```bash
+git add Sources/LogicMCPCore/AX/AXBridge.swift Sources/LogicMCPCore/Tools/PluginTools.swift Tests/LogicMCPCoreTests/AXPluginToolTests.swift
+git commit -m "fix(ax): settle-poll the Controls table (fixes intermittent opaque:true race)"
+```
+
 ---
 
 ## Task 2: Rewire `set_plugin_param` onto the adaptive converger
@@ -340,7 +427,7 @@ Switch `SetPluginParamTool` to `convergeAdaptive` with the Task-0 default, delet
 
 - [ ] **Step 1: Update the converging tool tests to the new converger + add the kind-mismatch test**
 
-These tool tests exercise whatever `AXBridge.defaultSliderActuation` Task 0 selected. **If Task 0 selected `.absolute`** (binary search on absolute sets): flip `p.nudgeMode = true` → `false` in ALL FOUR converge fakes — `makeConvergingProvider`, `makeMixedKindProvider`, the inline provider in `testSetPluginParamUnitTargetSettlesAsyncSliderReadback`, and any other converge test that sets `nudgeMode = true`. Their assertions still hold under absolute sets: 25 % → raw 2500 (bisect on 0…10000, display=raw/100), 0.5 → raw 5000 (normalized path, unchanged), index "2" → slider C, and the async-settle test converges 0→3 on 0…6 with `setValueLatency=1` still exercising `settledValue`. **If Task 0 selected `.step`** (increment/decrement, ±step per action): keep those fakes but retarget them to values reachable in whole steps of the fake's `.increment` delta (10) — e.g. the async-settle fake becomes range 0…60, target `"30 %"`, display=raw/10 — so a finite number of ±10 steps lands exactly. Then add the kind-mismatch test:
+Task 0 proved the default is `.absolute` (binary search on absolute sets), so flip `p.nudgeMode = true` → `false` in ALL FOUR converge fakes — `makeConvergingProvider`, `makeMixedKindProvider`, the inline provider in `testSetPluginParamUnitTargetSettlesAsyncSliderReadback`, and any other converge test that sets `nudgeMode = true`. Their assertions still hold under absolute sets: 25 % → raw 2500 (bisect on 0…10000, display=raw/100), 0.5 → raw 5000 (normalized path, unchanged), index "2" → slider C, and the async-settle test converges 0→3 on 0…6 with `setValueLatency=1` still exercising `settledValue`. Then add the kind-mismatch test:
 
 ```swift
 /// set_plugin_param must REFUSE a param that resolves to a non-slider (a toggle/popup), pointing
@@ -498,9 +585,14 @@ public func selectEnumChoice(from popup: AXHandle, choice: String) async throws 
     try? p.perform(.press, on: popup)                 // open it (return code unreliable — read the tree)
     try? await Task.sleep(for: .milliseconds(40))
     let items = menuItems(under: popup)
-    guard let hit = items.first(where: {
-        (p.string(.title, of: $0) ?? "").caseInsensitiveCompare(choice) == .orderedSame
-    }) else {
+    // Task 0: menu item titles can be ABBREVIATED ("18") vs the popup display ("18 dB/Oct"), so match
+    // tolerantly in BOTH directions — exact, or one is the other's leading token.
+    let c = choice.lowercased()
+    func matches(_ raw: String?) -> Bool {
+        let t = (raw ?? "").lowercased()
+        return !t.isEmpty && (t == c || c.hasPrefix(t + " ") || t.hasPrefix(c + " "))
+    }
+    guard let hit = items.first(where: { matches(p.string(.title, of: $0)) }) else {
         try? p.perform(.cancel, on: popup)
         throw ToolFailure(error: "no choice '\(choice)'", layer: "ax",
                           expected: "one of: \(items.compactMap { p.string(.title, of: $0) }.joined(separator: ", "))",
@@ -551,10 +643,12 @@ public struct SetPluginOptionTool: LogicTool {
                               layer: "ax", expected: "an enum popup parameter", observed: "kind \(target.kind.rawValue)")
         }
         try await daemon.menu.selectEnumChoice(from: target.handle, choice: choice)
-        // Oracle: re-walk the table and confirm the popup now displays `choice`.
-        let after = try await daemon.ax.controlTable(in: axEnterPluginControls(daemon, trackName: trackName, slot: slot).window)
+        // Oracle: re-open + re-walk (settled) and confirm the popup display reflects `choice`. The
+        // display can be verbose ("18 dB/Oct") vs an abbreviated choice ("18") — accept either containment.
+        let (_, _, after) = try await axEnterPluginControls(daemon, trackName: trackName, slot: slot)
         let now = after.first { $0.name == target.name }?.display ?? ""
-        let verified = now.caseInsensitiveCompare(choice) == .orderedSame
+        let verified = now.range(of: choice, options: .caseInsensitive) != nil
+            || choice.range(of: now, options: .caseInsensitive) != nil
         await daemon.journal.record(MixMutation(
             tool: "set_plugin_option", track: name, undoArguments: nil,
             descriptionText: "\(name) \(target.name) → \(now)"))
@@ -692,8 +786,8 @@ public struct PressPluginControlTool: LogicTool {
         }
         let before = target.display ?? ""
         try await daemon.ax.press(target.handle)
-        // Oracle: re-walk and confirm the toggle's value changed.
-        let after = try await daemon.ax.controlTable(in: axEnterPluginControls(daemon, trackName: trackName, slot: slot).window)
+        // Oracle: re-open + re-walk (settled) and confirm the toggle's value changed.
+        let (_, _, after) = try await axEnterPluginControls(daemon, trackName: trackName, slot: slot)
         let now = after.first { $0.name == target.name }?.display ?? ""
         await daemon.journal.record(MixMutation(
             tool: "press_plugin_control", track: name, undoArguments: nil,
@@ -878,6 +972,7 @@ The merge decision (this branch → `main`) is the user's, gated on Step 4 passi
 
 **Spec coverage** (against `2026-07-17-plugin-write-path-actuation-design.md`):
 - Adaptive converger (binary-search / step, display oracle, direction/polarity, honest stall) → Task 1; rewired into `set_plugin_param` → Task 2. ✓
+- Controls-table read reliability (the live intermittent `opaque:true` populate race Task 0 found) → Task 1b (`settledControlTable`, routed through `axEnterPluginControls`). ✓
 - `set_plugin_option` (enum popups, plain-menu vs search per Task 0) → Task 3. ✓
 - `press_plugin_control` (checkbox/button, press-only) → Task 4. ✓
 - Probe-gated actuation + undo decision → Task 0 records both; converger default in Task 1; undo self-journal in Task 5 (robust regardless of the undo finding). ✓
