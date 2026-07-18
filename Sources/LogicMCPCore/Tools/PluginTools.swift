@@ -289,7 +289,7 @@ public struct SetPluginOptionTool: LogicTool {
 
 public struct PressPluginControlTool: LogicTool {
     public let name = "press_plugin_control"
-    public let description = "Press or toggle a plugin's non-knob control (an in-table checkbox, or a header button) by name, via Logic's Controls view. Verifies the new state where the control exposes one. Use set_plugin_param for sliders and set_plugin_option for enum popups."
+    public let description = "Press or toggle a plugin's in-table checkbox/switch control by name, via Logic's Controls view, verified by re-reading its value. Use set_plugin_param for sliders and set_plugin_option for enum popups. (Header controls like bypass/compare are not addressable yet.)"
     public let inputSchema = trackArgSchema([
         "slot": .object(["type": .string("integer")]),
         "param": .object(["type": .string("string"), "description": .string("Control name (prefix ok) or integer index")]),
