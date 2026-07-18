@@ -99,6 +99,40 @@ struct AXDump: AsyncParsableCommand {
             try? p.perform(.press, on: target)
             usleep(900_000)
             for w in wins { dump(p, w, depth: 0, maxDepth: maxD) }
+        case "setvalue":
+            // Diagnostic: AXSetValue a number on a located element, then re-read — reveals whether the
+            // control is ABSOLUTE (lands at v) or ±1-NUDGE, and its min/max/settable. Task 0 gate.
+            guard args.count >= 4, let v = Double(args[3]) else {
+                print("usage: setvalue <winNeedle> <=desc|desc> <number> [role]"); return
+            }
+            let needle = args[1].lowercased()
+            var desc = args[2].lowercased(); var exact = false
+            if desc.hasPrefix("=") { exact = true; desc.removeFirst() }
+            let role = args.count >= 5 ? args[4] : nil
+            let wins = p.windows().filter { (p.string(.title, of: $0) ?? "").lowercased().contains(needle) }
+            guard let target = wins.compactMap({ firstByDescription(p, in: $0, contains: desc, role: role, exact: exact) }).first else {
+                print("no element desc containing '\(desc)' in '\(needle)'"); return
+            }
+            print("before: value=\(p.number(of: target).debugDescription) settable=\(p.isSettable(target)) minmax=\(p.minMax(of: target))")
+            try? p.setNumber(v, of: target)
+            usleep(400_000)
+            print("after setNumber(\(v)): value=\(p.number(of: target).debugDescription)")
+        case "setstring":
+            // Diagnostic: AXSetValue a string on a located element (e.g. a track name field), then
+            // re-read — reveals whether the edit COMMITS no-focus. Task 0 rename gate.
+            guard args.count >= 4 else { print("usage: setstring <winNeedle> <=desc|desc> <string> [role]"); return }
+            let needle = args[1].lowercased()
+            var desc = args[2].lowercased(); var exact = false
+            if desc.hasPrefix("=") { exact = true; desc.removeFirst() }
+            let role = args.count >= 5 ? args[4] : nil
+            let wins = p.windows().filter { (p.string(.title, of: $0) ?? "").lowercased().contains(needle) }
+            guard let target = wins.compactMap({ firstByDescription(p, in: $0, contains: desc, role: role, exact: exact) }).first else {
+                print("no element desc containing '\(desc)' in '\(needle)'"); return
+            }
+            print("before: value=\(p.string(.value, of: target).debugDescription) desc=\(p.string(.description, of: target).debugDescription)")
+            try? p.setString(args[3], of: target)
+            usleep(500_000)
+            print("after setString('\(args[3])'): value=\(p.string(.value, of: target).debugDescription) desc=\(p.string(.description, of: target).debugDescription)")
         case "menu":
             guard args.count >= 2 else { print("usage: axdump menu <Track|File|Mix|Edit>"); return }
             guard let mb = p.menuBar() else { print("no menu bar"); return }
