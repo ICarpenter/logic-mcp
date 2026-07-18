@@ -136,8 +136,10 @@ public struct GetPluginParamsTool: LogicTool {
         }
         let (name, _, controls) = try await axEnterPluginControls(daemon, trackName: trackName, slot: slot)
         let params: [Value] = controls.map { c in
-            .object(["index": .int(c.index), "name": .string(c.name), "kind": .string(c.kind.rawValue),
-                     "display": .string(c.display ?? ""), "settable": .bool(c.settable)])
+            var obj: [String: Value] = ["index": .int(c.index), "name": .string(c.name), "kind": .string(c.kind.rawValue),
+                                        "display": .string(c.display ?? ""), "settable": .bool(c.settable)]
+            if let ch = c.choices { obj["choices"] = .array(ch.map { .string($0) }) }
+            return .object(obj)
         }
         return .object(["track": .string(name), "slot": .int(slot),
                         "opaque": .bool(controls.isEmpty), "params": .array(params)])
@@ -172,7 +174,8 @@ public struct SetPluginParamTool: LogicTool {
         // list, which would put a different control at a given index than the one just listed
         // (see the whole-branch review: `set_plugin_param(param:"3")` could silently hit the
         // wrong slider and still report `verified:true`). The resolved control must still be a
-        // slider — an integer index landing on a toggle/popup is "no match", not a silent misuse.
+        // slider — an integer index landing on a toggle/popup throws its own kind-mismatch error
+        // below, not a silent "no match".
         let sliders = controls.filter { $0.kind == .slider }
         let wanted = paramKey.lowercased()
         let byIndex = Int(paramKey).flatMap { i in (0..<controls.count).contains(i) ? controls[i] : nil }
@@ -206,10 +209,12 @@ public struct SetPluginParamTool: LogicTool {
         let priorDisplay = target.display ?? ""
         let undoable = PluginDisplay.parse(priorDisplay).number != nil
 
-        // Both convergence paths nudge ±1 raw unit per AXSetValue call (ax-findings.md), so the
-        // step budget must scale with the slider's actual raw range — a flat cap (e.g. 600)
-        // can't reach a far target on a wide-range slider (a 0…10000 raw Bass % control needs up
-        // to 10000 nudges to traverse end to end).
+        // The default `.absolute` convergence path (`convergeByBisection`) binary-searches the raw
+        // range and does not consume `steps` at all. `steps` feeds the normalized `nudgeToRaw`
+        // path (±1 raw unit per AXSetValue call, ax-findings.md) and the `.step`
+        // (AXIncrement/AXDecrement) fallback, so it must scale with the slider's actual raw range —
+        // a flat cap (e.g. 600) can't reach a far target on a wide-range slider (a 0…10000 raw Bass
+        // % control needs up to 10000 nudges to traverse end to end).
         let (loO, hiO) = await daemon.ax.minMax(of: target.handle)
         guard let lo = loO, let hi = hiO, hi > lo else {
             throw ToolFailure(error: "parameter '\(target.name)' has no readable range", layer: "ax",
@@ -340,6 +345,6 @@ public struct PressPluginControlTool: LogicTool {
             // Involutive: a toggle's own undo is another press of the same control.
             undoArguments: ["track": name, "slot": String(slot), "param": target.name],
             descriptionText: "\(name) \(target.name) → \(now)"))
-        return .object(["param": .string(target.name), "display": .string(now), "verified": .bool(now != before)])
+        return .object(["param": .string(target.name), "display": .string(now), "verified": .bool(!now.isEmpty && now != before)])
     }
 }

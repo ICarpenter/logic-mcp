@@ -510,6 +510,48 @@ final class AXPluginToolTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(bass.numberValue), 0, accuracy: 1, "undo_last re-drove the slider to its prior 0 %")
     }
 
+    /// Locks the UndoTool.swift value/choice string-coercion fix with a BARE-numeric display (no
+    /// unit suffix at all, e.g. real Logic integer-count params) — the trickiest case, since a bare
+    /// numeric string like "3" is exactly what `Double(raw)` in UndoTool's coercion loop parses
+    /// most readily. Without excluding "value" from that coercion, the undo's `value:"3"` string
+    /// gets turned into `.double(3)`, which `set_plugin_param` treats as the NORMALIZED 0.0–1.0
+    /// branch (3 is out of range) and throws — the undo call fails, is recorded as "skipped", and
+    /// the slider is left at its post-set value (5) instead of reverting to 3.
+    func testUndoLastReversesSetPluginParamBareNumericDisplay() async throws {
+        let group = FakeAXNode(role: "AXGroup", stringValue: "3")
+        let bass  = FakeAXNode(role: "AXSlider", value: 3, settable: true, minValue: 0, maxValue: 10)
+        let cell  = FakeAXNode(role: "AXCell", children: [
+            FakeAXNode(role: "AXStaticText", stringValue: "Bass:"), group, bass])
+        let table = FakeAXNode(role: "AXTable",
+            children: [FakeAXNode(role: "AXRow", subrole: "AXTableRow", children: [cell])])
+        let viewBtn = FakeAXNode(role: "AXMenuButton", description: "view", title: "Controls")
+        let close = FakeAXNode(role: "AXButton", description: "close")
+        let window = FakeAXNode(role: "AXWindow", title: "vox", children: [
+            close, viewBtn, FakeAXNode(role: "AXScrollArea", children: [table])])
+        close.closesWindow = window
+        let open = FakeAXNode(role: "AXButton", description: "open"); open.opensWindow = window
+        let eqGroup = FakeAXNode(role: "AXGroup", description: "Channel EQ", children: [open])
+        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
+            FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute", stringValue: "off"),
+            eqGroup])
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [
+            FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer", children: [area])]))
+        p.nudgeMode = false   // Task 0 default: AXSetValue is absolute on Controls-view sliders
+        p.onSetNumber = { node, raw in
+            if node === bass { group.stringValue = "\(Int(raw))" }   // bare-numeric display, no unit
+        }
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        let registry = ToolRegistry(); await d.registerAllTools(in: registry)
+        _ = try await d.axMixer.syncTracks()
+        _ = try await SetPluginParamTool(daemon: d).invoke([
+            "track": .string("vox"), "slot": .int(0), "param": .string("Bass"), "value": .string("5")])
+        XCTAssertEqual(try XCTUnwrap(bass.numberValue), 5, accuracy: 1)
+        _ = try await UndoLastTool(daemon: d, registry: registry).invoke(["n": .int(1)])
+        XCTAssertEqual(try XCTUnwrap(bass.numberValue), 3, accuracy: 1,
+                       "undo_last re-drove the bare-numeric-display slider back to its prior raw 3")
+    }
+
     /// A set_plugin_option followed by undo_last must re-select the popup's prior choice, via OUR
     /// journal — the option half of the smoke's "wrong-thing-undone" hazard. Also a regression guard
     /// for the reconstruction bug where a numeric-LOOKING `choice` string (e.g. an enum whose options
