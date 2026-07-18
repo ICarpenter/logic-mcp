@@ -2,22 +2,33 @@
 
 A local MCP server (Swift daemon, MCP over stdio) that gives Claude end-to-end control of Logic Pro — a "cockpit" for collaborating with an agent on production and engineering work.
 
-## Status (as of 2026-07-17)
+## Status (as of 2026-07-18)
 
 - **Design specs:** `docs/superpowers/specs/2026-07-08-logic-mcp-design.md` (original architecture),
   `2026-07-10-ax-mixer-core-design.md` (Phase 2 boundary), `2026-07-13-ax-structural-ops-design.md` (Phase 3),
   `2026-07-15-plugin-control-suite-design.md` (Phase 4 Controls-view suite),
   `2026-07-17-plugin-write-path-actuation-design.md` (Phase 4 Plan 2a).
-- **Read `.superpowers/sdd/HANDOFF.md` first.** It carries current state, the AX pivot, the recurring
-  stale-handle lesson, and known limitations. Per-task history is in `progress.md`; real-Logic ground truth
-  (mixer-slider ±1-nudge vs. **Controls-view slider absolute-set**, slider ranges, off-screen degradation, the
-  two search popups, the plugin-window layout, and the Controls-view async timings) is in `ax-findings.md`.
-  (All three live under `.superpowers/sdd/` and are gitignored — local only.)
-- **Phases 1–3 + Phase 4 Plan 1 are SHIPPED to `main`; Phase 4 Plan 2a is in PR #10** — every phase live-verified
-  on real Logic. Phase 1 = MCUBridge; Phase 2 = AX Mixer Core; Phase 3 = AX Structural Ops (+ fix PRs #3–#7);
-  **Phase 4 Plan 1 = plugin Controls-view READ engine (#9); Phase 4 Plan 2a = plugin WRITE path** (`set_plugin_param`
-  converge, `set_plugin_option`, `press_plugin_control`, undo) — **228 tests green, live smoke passes incl. a
-  verified third-party (SketchCassette II) write.**
+- **Read `.superpowers/sdd/HANDOFF.md` first, then `ax-findings.md`.** HANDOFF carries current state, the AX
+  pivot, the recurring stale-handle lesson, and known limitations. Per-task history is in `progress.md`;
+  real-Logic ground truth (mixer-slider ±1-nudge vs. **Controls-view slider absolute-set**, slider ranges,
+  off-screen degradation, the two search popups, the plugin-window layout, the Controls-view async timings,
+  **and the 2026-07-18 ARRANGE/timeline surface map**) is in `ax-findings.md`. (All three live under
+  `.superpowers/sdd/` and are gitignored — local only.)
+- **THE ARRANGE SURFACE LAW (2026-07-18 feasibility probe — read `ax-findings.md` for the full map):** the
+  arrange window's canvas hides time-positioned EVENTS (tempo nodes, signature/marker changes, MIDI notes,
+  automation breakpoints are custom-drawn, NOT AX), BUT **Logic's List Editors expose every event class
+  except automation as a settable `AXTable`** (tabs Event/Marker/Tempo/Signature; each row = Position + value
+  as per-digit `AXSlider "Segment N"` groups; converge against the cell's display-string oracle — the SAME
+  engine as the plugin Controls view). Proven settable: project tempo/key/sig + playhead + cycle/locators
+  (control bar), track headers + `Has Focus` selection signal, region move/rename/resize + tempo events
+  (global AND regional) + MIDI notes (via the List Editors), MIDI import/export (menu + open-panel). **The
+  ONE gap: track automation curves have no List-Editor tab and expose no node element — only the imprecise
+  write-mode+playhead workaround.**
+- **Phases 1–3 + Phase 4 Plans 1 & 2a are all SHIPPED to `main`** (`main` HEAD `a52058c`) — every phase
+  live-verified on real Logic. Phase 1 = MCUBridge; Phase 2 = AX Mixer Core; Phase 3 = AX Structural Ops
+  (+ fix PRs #3–#7); **Phase 4 Plan 1 = plugin Controls-view READ engine (#9); Phase 4 Plan 2a = plugin WRITE
+  path** (`set_plugin_param` converge, `set_plugin_option`, `press_plugin_control`, undo) (#10) — **228 tests
+  green, live smoke passes incl. a verified third-party (SketchCassette II) write.**
 - **THE PIVOT:** Logic 12.3's mixer is fully **Accessibility-addressable AND AX writes land with Logic in the
   BACKGROUND** (no focus stolen). **AX is the primary no-focus read/write + self-verification path** for the
   mixer and structural ops; MCU is retained for transport, metering, and as a no-Accessibility fallback.
@@ -43,13 +54,18 @@ A local MCP server (Swift daemon, MCP over stdio) that gives Claude end-to-end c
   returns a structured "not available via AX" error. All unfixable without focus-stealing CGEvent clicks.
 - **Open limitations (recorded, not bugs):** off-screen strips degrade `output`/`volumeDB` reads (names are
   fixed via the child name field; output/volume have no alternate AX source — needs a design call:
-  scroll-into-view vs. last-known-good); no timeline/arrange addressing (regions, playhead, locators, MIDI).
-- **NEXT PHASE (not started):** **Phase 4 Plan 2b** — the deferred remainder of the plugin-control suite: a
-  persisted **learned-profile store**, `load_instrument` (software-instrument slot), preset load/list, and
-  `learn_plugin`. Then two adjacent buckets: **header plugin controls** (bypass/compare — not addressable yet,
-  they live outside the Controls table), and the **arrange/timeline** bucket (Phase 4a playhead/locators/regions,
-  4b MIDI). Smaller recorded follow-ups from Plan 2a (in `progress.md`): a shared `resolveControl` DRY extraction,
-  a transient `no plugin window` on software-instrument slots, and a few test-coverage gaps.
+  scroll-into-view vs. last-known-good); **track automation CURVES are not AX-addressable** (no List-Editor tab,
+  no node element — the one arrange-surface gap; write-mode+playhead workaround only).
+- **NEXT PHASE (in progress) — Phase 5 "Arrange/Timeline", scoped after the 2026-07-18 feasibility probe
+  proved the surface viable.** Roadmap: **Plan A "Control Room"** (STARTING — control-bar scalars: project
+  tempo/key/time-sig, playhead, cycle/locators, transport; arrange track-header ops; resolve `Has Focus`
+  → reopen `delete_track`/`rename_track`). **Plan B "List-Editor engine"** (the reusable table walker →
+  tempo global+regional, signature, marker, region Position/Name/Length). **Plan C "MIDI authoring"** (note
+  CRUD via the descended Event List + `File ▸ Import ▸ MIDI File…` open-panel). Automation curves = deferred
+  gap. **Still deferred from Phase 4:** Plan 2b (plugin learned-profile store, `load_instrument`, presets,
+  `learn_plugin` — treated YAGNI while the Controls-view read path gives stable names live) and header plugin
+  controls (bypass/compare). Plan 2a follow-ups in `progress.md`: shared `resolveControl` DRY, transient
+  `no plugin window` on software-instrument slots, test-coverage gaps.
 
 ## Architecture in one paragraph
 
