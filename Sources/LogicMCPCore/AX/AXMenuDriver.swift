@@ -182,6 +182,31 @@ public actor AXMenuDriver {
         try p.perform(.press, on: hit)
     }
 
+    /// Select `choice` in an in-table enum AXPopUpButton by pressing it and walking its plain AXMenu.
+    /// Distinct from the SEARCH-driven catalog popups (selectRoutingDestination/selectPluginFromPopup):
+    /// an in-table enum is a small fixed list that opens a plain AXMenu of AXMenuItems (Task 0). Picks
+    /// the EXACT case-insensitive title match. Dismisses the popup (AXCancel) on any throw path. The
+    /// TOOL re-reads the popup's value afterwards as the independent oracle.
+    public func selectEnumChoice(from popup: AXHandle, choice: String) async throws {
+        try? p.perform(.press, on: popup)                 // open it (return code unreliable — read the tree)
+        try? await Task.sleep(for: .milliseconds(40))
+        let items = menuItems(under: popup)
+        // Task 0: menu item titles can be ABBREVIATED ("18") vs the popup display ("18 dB/Oct"), so match
+        // tolerantly in BOTH directions — exact, or one is the other's leading token.
+        let c = choice.lowercased()
+        func matches(_ raw: String?) -> Bool {
+            let t = (raw ?? "").lowercased()
+            return !t.isEmpty && (t == c || c.hasPrefix(t + " ") || t.hasPrefix(c + " "))
+        }
+        guard let hit = items.first(where: { matches(p.string(.title, of: $0)) }) else {
+            try? p.perform(.cancel, on: popup)
+            throw ToolFailure(error: "no choice '\(choice)'", layer: "ax",
+                              expected: "one of: \(items.compactMap { p.string(.title, of: $0) }.joined(separator: ", "))",
+                              observed: "no match")
+        }
+        try p.perform(.press, on: hit)
+    }
+
     /// Insert-plugin popup — SEARCH-DRIVEN (see Fixtures/ax/popup_plugin_search.txt).
     ///
     /// The old code pressed the slot and did `menuItems(under: slot)`, expecting the popup AXMenu to

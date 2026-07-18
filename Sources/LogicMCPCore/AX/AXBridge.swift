@@ -424,8 +424,14 @@ public actor AXBridge {
             let group = kids.first(where: { p.string(.role, of: $0) == "AXGroup" })
             let display = kind == .slider ? group.flatMap { p.string(.value, of: $0) }
                                           : p.string(.value, of: control)
+            // Best-effort: some popups pre-expose their menu items statically (without a press);
+            // if not, `choices` stays nil and `set_plugin_option`'s live walk is authoritative.
+            let choices: [String]? = kind == .popup
+                ? p.children(of: control).flatMap { m in p.string(.role, of: m) == "AXMenu" ? p.children(of: m) : [] }
+                    .compactMap { p.string(.title, of: $0) }.nonEmptyOrNil()
+                : nil
             out.append(PluginControl(index: out.count, name: name, kind: kind, display: display,
-                                     choices: nil, settable: p.isSettable(control),
+                                     choices: choices, settable: p.isSettable(control),
                                      handle: control, displayHandle: kind == .slider ? group : nil))
         }
         return out
@@ -444,4 +450,8 @@ public actor AXBridge {
             try? await Task.sleep(for: .milliseconds(50))
         }
     }
+}
+
+private extension Array {
+    func nonEmptyOrNil() -> Array? { isEmpty ? nil : self }
 }

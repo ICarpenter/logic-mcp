@@ -237,3 +237,52 @@ public struct SetPluginParamTool: LogicTool {
         return .object(["param": .string(target.name), "display": .string(display), "verified": .bool(verified)])
     }
 }
+
+public struct SetPluginOptionTool: LogicTool {
+    public let name = "set_plugin_option"
+    public let description = "Select a value in a plugin's enum parameter (an in-table popup) via Logic's Controls view, verified against the popup's displayed value. 'param': name (prefix ok) or integer index. 'choice': the exact option name."
+    public let inputSchema = trackArgSchema([
+        "slot": .object(["type": .string("integer")]),
+        "param": .object(["type": .string("string"), "description": .string("Parameter name (prefix ok) or integer index")]),
+        "choice": .object(["type": .string("string"), "description": .string("The option name to select")]),
+    ], required: ["slot", "param", "choice"])
+    let daemon: Daemon
+
+    public func invoke(_ args: [String: Value]) async throws -> Value {
+        let trackName = try requireString(args, "track", tool: name)
+        guard let slot = args["slot"]?.coercedInt, (0...127).contains(slot) else {
+            throw ToolFailure(error: "'slot' must be an integer in 0…127", layer: "daemon")
+        }
+        let paramKey = args["param"]?.stringValue ?? args["param"]?.coercedInt.map(String.init)
+        guard let paramKey else { throw ToolFailure(error: "missing required argument 'param'", layer: "daemon") }
+        let choice = try requireString(args, "choice", tool: name)
+
+        let (name, _, controls) = try await axEnterPluginControls(daemon, trackName: trackName, slot: slot)
+        guard !controls.isEmpty else {
+            throw ToolFailure(error: "plugin exposes no addressable parameters", layer: "ax",
+                              expected: "an addressable Controls-view parameter", observed: "opaque plugin")
+        }
+        let wanted = paramKey.lowercased()
+        let target = controls.first { $0.name.lowercased().hasPrefix(wanted) }
+            ?? Int(paramKey).flatMap { i in (0..<controls.count).contains(i) ? controls[i] : nil }
+        guard let target else {
+            throw ToolFailure(error: "no parameter '\(paramKey)'", layer: "ax",
+                              expected: controls.map(\.name).joined(separator: ", "), observed: "no match")
+        }
+        guard target.kind == .popup else {
+            throw ToolFailure(error: "parameter '\(target.name)' is not an enum popup — use \(target.kind == .slider ? "set_plugin_param" : "press_plugin_control")",
+                              layer: "ax", expected: "an enum popup parameter", observed: "kind \(target.kind.rawValue)")
+        }
+        try await daemon.menu.selectEnumChoice(from: target.handle, choice: choice)
+        // Oracle: re-open + re-walk (settled) and confirm the popup display reflects `choice`. The
+        // display can be verbose ("18 dB/Oct") vs an abbreviated choice ("18") — accept either containment.
+        let (_, _, after) = try await axEnterPluginControls(daemon, trackName: trackName, slot: slot)
+        let now = after.first { $0.name == target.name }?.display ?? ""
+        let verified = now.range(of: choice, options: .caseInsensitive) != nil
+            || choice.range(of: now, options: .caseInsensitive) != nil
+        await daemon.journal.record(MixMutation(
+            tool: "set_plugin_option", track: name, undoArguments: nil,
+            descriptionText: "\(name) \(target.name) → \(now)"))
+        return .object(["param": .string(target.name), "display": .string(now), "verified": .bool(verified)])
+    }
+}

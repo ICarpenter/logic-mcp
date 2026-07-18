@@ -88,6 +88,7 @@ public final class Daemon: Sendable {
         await registry.register(SetSendTool(daemon: self))
         await registry.register(GetPluginParamsTool(daemon: self))
         await registry.register(SetPluginParamTool(daemon: self))
+        await registry.register(SetPluginOptionTool(daemon: self))
         await registry.register(CreateTrackTool(daemon: self))
         await registry.register(RenameTrackTool(daemon: self))
         await registry.register(DeleteTrackTool(daemon: self))

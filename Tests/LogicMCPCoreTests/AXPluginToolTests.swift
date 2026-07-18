@@ -398,6 +398,58 @@ final class AXPluginToolTests: XCTestCase {
         throw XCTSkip("no window '\(title)'")
     }
 
+    /// A Controls window with an enum popup 'Tape Type' whose menu offers Standard/Vintage/Old; picking
+    /// a menu item sets the popup's displayed value (models Logic). Returns provider + the popup node.
+    private func makeEnumProvider() -> (FakeAXProvider, popup: FakeAXNode) {
+        let popup = FakeAXNode(role: "AXPopUpButton", stringValue: "Standard")
+        let items = ["Standard", "Vintage", "Old"].map { title -> FakeAXNode in
+            let item = FakeAXNode(role: "AXMenuItem", title: title)
+            item.onPress = { popup.stringValue = title }
+            return item
+        }
+        popup.children = [FakeAXNode(role: "AXMenu", children: items)]
+        let cell = FakeAXNode(role: "AXCell", children: [
+            FakeAXNode(role: "AXStaticText", stringValue: "Tape Type:"),
+            FakeAXNode(role: "AXGroup", stringValue: "Standard"), popup])
+        let table = FakeAXNode(role: "AXTable",
+            children: [FakeAXNode(role: "AXRow", subrole: "AXTableRow", children: [cell])])
+        let viewBtn = FakeAXNode(role: "AXMenuButton", description: "view", title: "Controls")
+        let close = FakeAXNode(role: "AXButton", description: "close")
+        let window = FakeAXNode(role: "AXWindow", title: "vox", children: [
+            close, viewBtn, FakeAXNode(role: "AXScrollArea", children: [table])])
+        close.closesWindow = window
+        let open = FakeAXNode(role: "AXButton", description: "open"); open.opensWindow = window
+        let eqGroup = FakeAXNode(role: "AXGroup", description: "Tape", children: [open])
+        let strip = FakeAXNode(role: "AXLayoutItem", description: "vox", children: [
+            FakeAXNode(role: "AXButton", subrole: "AXSwitch", description: "mute", stringValue: "off"), eqGroup])
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [strip])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [
+            FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer", children: [area])]))
+        return (p, popup)
+    }
+
+    func testSetPluginOptionSelectsChoice() async throws {
+        let (p, popup) = makeEnumProvider()
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        _ = try await d.axMixer.syncTracks()
+        let r = try await SetPluginOptionTool(daemon: d).invoke([
+            "track": .string("vox"), "slot": .int(0), "param": .string("Tape Type"), "choice": .string("Vintage")])
+        guard case .object(let o) = r else { return XCTFail() }
+        XCTAssertEqual(o["verified"], .bool(true))
+        XCTAssertEqual(popup.stringValue, "Vintage")
+    }
+
+    func testSetPluginOptionUnknownChoiceListsChoices() async throws {
+        let (p, _) = makeEnumProvider()
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        _ = try await d.axMixer.syncTracks()
+        do {
+            _ = try await SetPluginOptionTool(daemon: d).invoke([
+                "track": .string("vox"), "slot": .int(0), "param": .string("Tape Type"), "choice": .string("Nope")])
+            XCTFail("expected an unknown-choice ToolFailure")
+        } catch let f as ToolFailure { XCTAssertTrue(f.expected?.contains("Vintage") ?? false) }
+    }
+
     /// Regression for the live opaque:true race: the Controls AXTable populates async after the view
     /// switch. `settledControlTable` must poll past the empty reads; a single `controlTable` sees [].
     func testSettledControlTablePollsPastEmptyReads() async throws {
