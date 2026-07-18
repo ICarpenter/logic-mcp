@@ -22,7 +22,7 @@ public struct UndoLastTool: LogicTool {
             var callArgs: [String: Value] = [:]
             for (key, raw) in undoArgs {
                 if raw == "true" || raw == "false" { callArgs[key] = .bool(raw == "true") }
-                else if let d = Double(raw), key != "track", key != "bus", key != "param" {
+                else if let d = Double(raw), !["track", "bus", "param", "value", "choice"].contains(key) {
                     callArgs[key] = key == "level" || key == "position" ? .int(Int(d)) : .double(d)
                 } else { callArgs[key] = .string(raw) }
             }

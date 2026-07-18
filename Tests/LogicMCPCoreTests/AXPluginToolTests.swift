@@ -509,4 +509,42 @@ final class AXPluginToolTests: XCTestCase {
         _ = try await UndoLastTool(daemon: d, registry: registry).invoke(["n": .int(1)])
         XCTAssertEqual(try XCTUnwrap(bass.numberValue), 0, accuracy: 1, "undo_last re-drove the slider to its prior 0 %")
     }
+
+    /// A set_plugin_option followed by undo_last must re-select the popup's prior choice, via OUR
+    /// journal — the option half of the smoke's "wrong-thing-undone" hazard. Also a regression guard
+    /// for the reconstruction bug where a numeric-LOOKING `choice` string (e.g. an enum whose options
+    /// are bare digits, as real Logic's Channel EQ "Low Cut Slope" popup has) got coerced to a
+    /// `.double` by `UndoLastTool` and `requireString` then threw, silently dropping the undo.
+    func testUndoLastReversesSetPluginOption() async throws {
+        let (p, popup) = makeEnumProvider()               // starts "Standard"
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        let registry = ToolRegistry(); await d.registerAllTools(in: registry)
+        _ = try await d.axMixer.syncTracks()
+        _ = try await SetPluginOptionTool(daemon: d).invoke([
+            "track": .string("vox"), "slot": .int(0), "param": .string("Tape Type"), "choice": .string("Vintage")])
+        XCTAssertEqual(popup.stringValue, "Vintage")
+        _ = try await UndoLastTool(daemon: d, registry: registry).invoke(["n": .int(1)])
+        XCTAssertEqual(popup.stringValue, "Standard", "undo_last re-selected the prior choice")
+    }
+
+    /// A press_plugin_control (toggle) followed by undo_last must re-press the checkbox back — a
+    /// toggle's own undo is another press of the same control (involutive).
+    func testUndoLastReversesPressPluginControl() async throws {
+        let (p, _, _) = makeMixedKindProvider()            // rows: slider A, toggle B ("0"), slider C
+        let d = await Daemon(wire: InMemoryWire(), axProvider: p)
+        let registry = ToolRegistry(); await d.registerAllTools(in: registry)
+        _ = try await d.axMixer.syncTracks()
+        let r = try await PressPluginControlTool(daemon: d).invoke([
+            "track": .string("vox"), "slot": .int(0), "param": .string("B")])
+        guard case .object(let o) = r else { return XCTFail() }
+        XCTAssertEqual(o["display"], .string("1"), "the checkbox flipped 0→1")
+        _ = try await UndoLastTool(daemon: d, registry: registry).invoke(["n": .int(1)])
+        let after = try await GetPluginParamsTool(daemon: d).invoke(["track": .string("vox"), "slot": .int(0)])
+        guard case .object(let ao) = after, case .array(let params)? = ao["params"] else { return XCTFail() }
+        let bDisplay = params.compactMap { p -> Value? in
+            guard case .object(let po) = p, po["name"] == .string("B") else { return nil }
+            return po["display"]
+        }.first
+        XCTAssertEqual(bDisplay, .string("0"), "undo_last re-pressed the toggle back to 0")
+    }
 }
