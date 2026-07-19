@@ -127,19 +127,14 @@ final class ArrangeToolTests: XCTestCase {
         return FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [arrange]))
     }
 
-    func testSelectTrackFocusesExactlyOne() async {
+    /// select_track is DISABLED (Task 0 live probe: the arrange header's Has Focus control is a
+    /// read-only status indicator; AXPress on it is a no-op) — it must always return a structured
+    /// error and never press anything.
+    func testSelectTrackIsDisabled() async {
         let (_, reg) = await makeDaemon(headersTree(["vox", "Rugrats", "bass"], focusedIndex: 0))
         let (json, isErr) = await callJSON(reg, "select_track", ["name": .string("Rugrats")])
-        XCTAssertFalse(isErr)
-        XCTAssertTrue(json.contains("\"selected\":\"Rugrats\""), json)
-        XCTAssertTrue(json.contains("\"confirmed\":true"), json)
-    }
-
-    func testSelectTrackUnknownNameErrors() async {
-        let (_, reg) = await makeDaemon(headersTree(["vox", "bass"], focusedIndex: 0))
-        let (json, isErr) = await callJSON(reg, "select_track", ["name": .string("nope")])
-        XCTAssertTrue(isErr)
-        XCTAssertTrue(json.contains("vox") && json.contains("bass"), json)   // lists available
+        XCTAssertTrue(isErr, json)
+        XCTAssertTrue(json.contains("not available"), json)
     }
 
     private func cycleTree(enabled: Bool) -> FakeAXProvider {
@@ -176,7 +171,14 @@ final class ArrangeToolTests: XCTestCase {
         let cycle = FakeAXNode(role: "AXCheckBox", description: "Cycle", stringValue: "1")
         let cbInner = FakeAXNode(role: "AXGroup", description: "Control Bar", children: [tempo, pos, time, key, cycle])
         let cbOuter = FakeAXNode(role: "AXGroup", description: "Control Bar", children: [cbInner])
-        let arrange = FakeAXNode(role: "AXWindow", title: "p - Tracks", children: [cbOuter])
+        // A Tracks header with one focused track — get_arrange_state reads selection (it only SETS
+        // selection that's unavailable via AX), so this is the same headersTree shape as above.
+        let focusRadio = FakeAXNode(role: "AXRadioButton", description: "Has Focus", stringValue: "1")
+        let nameField = FakeAXNode(role: "AXTextField", description: "vox", value: 0)
+        let headerItem = FakeAXNode(role: "AXLayoutItem", description: "Track 1 “vox”",
+                                    children: [focusRadio, nameField])
+        let header = FakeAXNode(role: "AXGroup", description: "Tracks header", children: [headerItem])
+        let arrange = FakeAXNode(role: "AXWindow", title: "p - Tracks", children: [cbOuter, header])
         let (_, reg) = await makeDaemon(FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [arrange])))
         let (json, isErr) = await callJSON(reg, "get_arrange_state", [:])
         XCTAssertFalse(isErr, json)
@@ -186,5 +188,6 @@ final class ArrangeToolTests: XCTestCase {
         XCTAssertTrue(json.contains("\"keySignature\":\"A Minor\""), json)
         XCTAssertTrue(json.contains("\"bar\":3"), json)
         XCTAssertTrue(json.contains("\"cycling\":true"), json)
+        XCTAssertTrue(json.contains("\"selectedTrack\":\"vox\""), json)
     }
 }

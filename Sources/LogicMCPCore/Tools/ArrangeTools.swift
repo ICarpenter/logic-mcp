@@ -102,28 +102,9 @@ public struct SetPlayheadTool: LogicTool {
     }
 }
 
-/// Press the named track's Has Focus radio and confirm — via a fresh re-read — that EXACTLY that
-/// track is now focused. Returns true iff confirmed. Throws layer:"ax" (listing names) if the track
-/// name is unknown. The delete/rename guard depends on this: never mutate on an unconfirmed selection.
-func selectTrackConfirmed(_ daemon: Daemon, _ name: String) async throws -> Bool {
-    guard await daemon.ax.arrangeWindow() != nil else {
-        throw ToolFailure(error: "no arrange window — is a project open in Logic?", layer: "ax",
-                          expected: "an AXWindow titled \"… - Tracks\"", observed: "none")
-    }
-    let names = await daemon.ax.arrangeHeaderItems().map(\.name)
-    guard let header = await daemon.ax.arrangeHeader(named: name), let focus = header.focus else {
-        throw ToolFailure(error: "no track '\(name)' in the arrange headers", layer: "ax",
-                          expected: "one of: \(names.joined(separator: ", "))", observed: "no match")
-    }
-    try await daemon.ax.press(focus)
-    // Selection re-renders headers; re-read from a fresh walk (never the captured handle).
-    let focused = await daemon.ax.focusedTrackNames()
-    return focused.count == 1 && focused[0].caseInsensitiveCompare(name) == .orderedSame
-}
-
 public struct SelectTrackTool: LogicTool {
     public let name = "select_track"
-    public let description = "Select (focus) a track by name in Logic's arrange area, via the track header's Has Focus control, confirmed by re-reading that exactly that track is focused. This is what makes delete_track safe. Case-insensitive."
+    public let description = "DISABLED — track selection is not available via Accessibility in this release. Always returns a structured error and never presses anything."
     public let inputSchema: Value = .object([
         "type": .string("object"),
         "properties": .object(["name": .object(["type": .string("string")])]),
@@ -131,94 +112,32 @@ public struct SelectTrackTool: LogicTool {
     ])
     let daemon: Daemon
     public func invoke(_ args: [String: Value]) async throws -> Value {
-        let name = try requireString(args, "name", tool: name)
-        let confirmed = try await selectTrackConfirmed(daemon, name)
-        return .object(["selected": .string(name), "confirmed": .bool(confirmed)])
+        throw ToolFailure(error: "track selection is not available via Accessibility", layer: "ax",
+                          expected: "n/a — AX cannot set Logic's track selection",
+                          observed: "the arrange header's Has Focus control is a read-only status indicator; AXPress on it (and on the track header / name field) is a no-op (Task 0 live probe, ax-findings.md)")
     }
 }
 
 public struct SetCycleTool: LogicTool {
     public let name = "set_cycle"
-    public let description = "Enable or disable Logic's cycle (loop) mode, and optionally set its range by bar. 'enabled': turn cycle on/off (verified). 'startBar'/'endBar' (optional, together): set the cycle range; the range is set by moving the playhead to each bar and copying its timeline position to the locator (encoding-free)."
+    public let description = "Enable or disable Logic's cycle (loop) mode, verified by re-reading the Cycle control. (Setting the cycle RANGE by bar is not available via AX — the locators are drag-only.)"
     public let inputSchema: Value = .object([
         "type": .string("object"),
         "properties": .object([
             "enabled": .object(["type": .string("boolean")]),
-            "startBar": .object(["type": .string("integer")]),
-            "endBar": .object(["type": .string("integer")]),
         ]),
+        "required": .array([.string("enabled")]),
     ])
     let daemon: Daemon
     public func invoke(_ args: [String: Value]) async throws -> Value {
-        // Step 1 (up front, mutation-free): parse args and validate the range ARGS only — cheap
-        // shape-checking, no AX handle resolution yet. Handles are resolved fresh, immediately
-        // before use, in each block below — never captured here and reused past a mutation.
-        let enabled = args["enabled"]?.boolValue
-        let rangeRequested = args["startBar"] != nil || args["endBar"] != nil
-
-        var s = 0, e = 0
-        if rangeRequested {
-            guard let sv = args["startBar"]?.coercedInt, let ev = args["endBar"]?.coercedInt,
-                  sv >= 1, ev > sv else {
-                throw ToolFailure(error: "set_cycle needs both startBar and endBar, with endBar > startBar", layer: "daemon")
-            }
-            s = sv; e = ev
+        guard let enabled = args["enabled"]?.boolValue else {
+            throw ToolFailure(error: "set_cycle requires 'enabled' (true/false)", layer: "daemon")
         }
-
-        guard enabled != nil || rangeRequested else {
-            throw ToolFailure(error: "set_cycle needs 'enabled' and/or 'startBar'+'endBar'", layer: "daemon")
-        }
-
-        var result: [String: Value] = [:]
-
-        // Step 2: range block FIRST — resolve every handle fresh and complete the whole range
-        // mutation BEFORE the toggle press below. Pressing Cycle is itself a mutation; a handle
-        // resolved earlier and used after it would be stale (CLAUDE.md "THE recurring bug class").
-        // A bad/unsupported range fails here, before any toggle has been touched — atomicity preserved.
-        if rangeRequested {
-            guard let thumb = await daemon.ax.playheadThumb(),
-                  let startM = await daemon.ax.cycleMarker("Start Marker"),
-                  let endM = await daemon.ax.cycleMarker("End Marker"),
-                  let barS = await daemon.ax.controlBarControl(role: "AXSlider", description: "bar"),
-                  let beatS = await daemon.ax.controlBarControl(role: "AXSlider", description: "beat"),
-                  await daemon.ax.isSettable(startM), await daemon.ax.isSettable(endM) else {
-                throw ToolFailure(error: "cycle range-by-bar is not available on this Logic build", layer: "ax",
-                                  expected: "settable Start/End Marker indicators and bar/beat sliders sharing the playhead-thumb encoding",
-                                  observed: "markers or bar/beat sliders not settable/found — set the cycle range in Logic, or use 'enabled' only")
-            }
-
-            // Rosetta stone: move the playhead to a bar, read its encoded timeline position, and write
-            // that raw to the marker — no need to decode Logic's internal tick unit.
-            func rawForBar(_ bar: Int) async throws -> Double {
-                _ = try await daemon.ax.nudgeToRaw(barS, target: Double(bar), maxSteps: 1200)
-                // Also land on the bar's downbeat (beat 1) — mirrors SetPlayheadTool's bar+beat
-                // pair — so a stale beat/tick offset from a prior position isn't carried into the
-                // recorded raw.
-                _ = try await daemon.ax.nudgeToRaw(beatS, target: 1, maxSteps: 64)
-                return await daemon.ax.value(of: thumb) ?? 0
-            }
-            let rawStart = try await rawForBar(s)
-            let rawEnd = try await rawForBar(e)
-            // Markers are assumed absolute-set (the Rosetta approach requires it): one AXSetValue lands the raw, so a small step cap is correct here — NOT derived from the marker's own encoded range (~2e15), which would make maxSteps astronomically large and effectively hang; if a marker turns out non-absolute, rangeVerified below honestly reports false rather than looping.
-            _ = try await daemon.ax.nudgeToRaw(startM, target: rawStart, maxSteps: 8)
-            _ = try await daemon.ax.nudgeToRaw(endM, target: rawEnd, maxSteps: 8)
-            let gotStart = await daemon.ax.value(of: startM) ?? 0
-            let gotEnd = await daemon.ax.value(of: endM) ?? 0
-            result["startBar"] = .int(s); result["endBar"] = .int(e)
-            result["rangeVerified"] = .bool(abs(gotStart - rawStart) < 1 && abs(gotEnd - rawEnd) < 1)
-        }
-
-        // Step 3: enable-toggle block LAST — resolve the Cycle checkbox FRESH here, immediately
-        // before pressing it, so it's never a handle carried across the range mutation above.
-        if let enabled {
-            let cycle = try await arrangeControl(daemon, role: "AXCheckBox", description: "Cycle", tool: name)
-            let now = (await daemon.ax.stringValue(.value, of: cycle)) == "1"
-            if now != enabled { try await daemon.ax.press(cycle) }
-            let after = (await daemon.ax.stringValue(.value, of: cycle)) == "1"
-            result["enabled"] = .bool(after)
-        }
-
-        return .object(result)
+        let cycle = try await arrangeControl(daemon, role: "AXCheckBox", description: "Cycle", tool: name)
+        let now = (await daemon.ax.stringValue(.value, of: cycle)) == "1"
+        if now != enabled { try await daemon.ax.press(cycle) }
+        let after = (await daemon.ax.stringValue(.value, of: cycle)) == "1"
+        return .object(["enabled": .bool(after)])
     }
 }
 
@@ -250,6 +169,8 @@ public struct GetArrangeStateTool: LogicTool {
         if let b = await num("bar"), let be = await num("beat") {
             obj["playhead"] = .object(["bar": .int(Int(b.rounded())), "beat": .int(Int(be.rounded()))])
         }
+        let focused = await daemon.ax.focusedTrackNames()
+        if focused.count == 1 { obj["selectedTrack"] = .string(focused[0]) }
         return .object(obj)
     }
 }

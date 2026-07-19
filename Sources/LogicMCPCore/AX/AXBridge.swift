@@ -497,14 +497,6 @@ public actor AXBridge {
         descendant(of: item, role: "AXRadioButton", description: "Has Focus")
     }
 
-    /// The arrange header whose parsed name case-insensitively equals `named`, with its Has Focus radio.
-    public func arrangeHeader(named: String) -> (item: AXHandle, focus: AXHandle?)? {
-        guard let hit = arrangeHeaderItems().first(where: {
-            $0.name.caseInsensitiveCompare(named) == .orderedSame
-        }) else { return nil }
-        return (hit.item, hasFocusRadio(in: hit.item))
-    }
-
     /// The set of currently-focused header names (Has Focus == "1"). Read AFTER a select to confirm
     /// exactly one — the delete guard depends on this being unambiguous.
     public func focusedTrackNames() -> [String] {
@@ -519,17 +511,6 @@ public actor AXBridge {
         guard let open = desc.firstIndex(of: "“"), let close = desc.lastIndex(of: "”"), open < close
         else { return nil }
         return String(desc[desc.index(after: open)..<close])
-    }
-
-    /// The ruler's `Playhead thumb` timeline indicator (encoded value; used as a bar→raw oracle).
-    public func playheadThumb() -> AXHandle? {
-        guard let w = arrangeWindow() else { return nil }
-        return descendant(of: w, role: "AXValueIndicator", description: "Playhead thumb")
-    }
-    /// A cycle locator indicator: `which` is "Start Marker" or "End Marker".
-    public func cycleMarker(_ which: String) -> AXHandle? {
-        guard let w = arrangeWindow() else { return nil }
-        return descendant(of: w, role: "AXValueIndicator", description: which)
     }
 }
 
