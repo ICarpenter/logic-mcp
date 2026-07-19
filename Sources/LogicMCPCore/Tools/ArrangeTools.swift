@@ -66,6 +66,42 @@ public struct SetTimeSignatureTool: LogicTool {
     }
 }
 
+public struct SetPlayheadTool: LogicTool {
+    public let name = "set_playhead"
+    public let description = "Move the playhead to a bar (and optional beat) via Logic's control bar, verified by re-reading the position. beat defaults to 1."
+    public let inputSchema: Value = .object([
+        "type": .string("object"),
+        "properties": .object([
+            "bar": .object(["type": .string("integer"), "description": .string("Target bar (1-based)")]),
+            "beat": .object(["type": .string("integer"), "description": .string("Target beat within the bar; defaults to 1")]),
+        ]),
+        "required": .array([.string("bar")]),
+    ])
+    let daemon: Daemon
+    public func invoke(_ args: [String: Value]) async throws -> Value {
+        guard let bar = args["bar"]?.coercedInt, bar >= 1 else {
+            throw ToolFailure(error: "'bar' must be an integer ≥ 1", layer: "daemon")
+        }
+        let beat = args["beat"]?.coercedInt ?? 1
+        guard beat >= 1 else { throw ToolFailure(error: "'beat' must be an integer ≥ 1", layer: "daemon") }
+
+        guard await daemon.ax.arrangeWindow() != nil else {
+            throw ToolFailure(error: "no arrange window — is a project open in Logic?", layer: "ax",
+                              expected: "an AXWindow titled \"… - Tracks\"", observed: "none")
+        }
+        guard let barS = await daemon.ax.controlBarControl(role: "AXSlider", description: "bar"),
+              let beatS = await daemon.ax.controlBarControl(role: "AXSlider", description: "beat") else {
+            throw ToolFailure(error: "playhead sliders not found in the Control Bar", layer: "ax",
+                              expected: "AXSlider description=\"bar\" and \"beat\"", observed: "none")
+        }
+        let achievedBar = try await daemon.ax.nudgeToRaw(barS, target: Double(bar), maxSteps: 1200)
+        let achievedBeat = try await daemon.ax.nudgeToRaw(beatS, target: Double(beat), maxSteps: 64)
+        let verified = Int(achievedBar.rounded()) == bar && Int(achievedBeat.rounded()) == beat
+        return .object(["bar": .int(Int(achievedBar.rounded())), "beat": .int(Int(achievedBeat.rounded())),
+                        "verified": .bool(verified)])
+    }
+}
+
 public struct SetKeySignatureTool: LogicTool {
     public let name = "set_key_signature"
     public let description = "Set the project key signature via Logic's control-bar popup (e.g. 'C Major', 'A Minor'), verified against the popup's displayed value."

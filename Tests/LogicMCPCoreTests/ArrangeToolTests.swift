@@ -82,4 +82,29 @@ final class ArrangeToolTests: XCTestCase {
         XCTAssertTrue(isErr)
         XCTAssertTrue(json.contains("A Minor"), json)   // error lists the live choices
     }
+
+    private func playheadTree(bar: Double = 1, beat: Double = 1) -> FakeAXProvider {
+        let barS = FakeAXNode(role: "AXSlider", description: "bar", value: bar, settable: true, minValue: 1, maxValue: 999)
+        let beatS = FakeAXNode(role: "AXSlider", description: "beat", value: beat, settable: true, minValue: 1, maxValue: 16)
+        let pos = FakeAXNode(role: "AXGroup", description: "Playhead Position", children: [barS, beatS])
+        let cbInner = FakeAXNode(role: "AXGroup", description: "Control Bar", children: [pos])
+        let cbOuter = FakeAXNode(role: "AXGroup", description: "Control Bar", children: [cbInner])
+        let arrange = FakeAXNode(role: "AXWindow", title: "p - Tracks", children: [cbOuter])
+        return FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [arrange]))
+    }
+
+    func testSetPlayheadBarAndBeat() async {
+        let (_, reg) = await makeDaemon(playheadTree())
+        let (json, isErr) = await callJSON(reg, "set_playhead", ["bar": .int(9), "beat": .int(3)])
+        XCTAssertFalse(isErr)
+        XCTAssertTrue(json.contains("\"bar\":9"), json)
+        XCTAssertTrue(json.contains("\"beat\":3"), json)
+    }
+
+    func testSetPlayheadBarOnlyDefaultsBeat() async {
+        let (_, reg) = await makeDaemon(playheadTree(bar: 5, beat: 2))
+        let (json, isErr) = await callJSON(reg, "set_playhead", ["bar": .int(12)])
+        XCTAssertFalse(isErr)
+        XCTAssertTrue(json.contains("\"bar\":12"), json)
+    }
 }
