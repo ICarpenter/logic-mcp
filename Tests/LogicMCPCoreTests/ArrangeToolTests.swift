@@ -108,4 +108,37 @@ final class ArrangeToolTests: XCTestCase {
         XCTAssertTrue(json.contains("\"bar\":12"), json)
         XCTAssertTrue(json.contains("\"beat\":1"), json)
     }
+
+    /// Arrange headers where pressing a Has-Focus radio behaves like a radio group.
+    private func headersTree(_ names: [String], focusedIndex: Int) -> FakeAXProvider {
+        var radios: [FakeAXNode] = []
+        var items: [FakeAXNode] = []
+        for (i, n) in names.enumerated() {
+            let radio = FakeAXNode(role: "AXRadioButton", description: "Has Focus",
+                                   stringValue: i == focusedIndex ? "1" : "0")
+            radios.append(radio)
+            let nameField = FakeAXNode(role: "AXTextField", description: n, value: 0)
+            items.append(FakeAXNode(role: "AXLayoutItem", description: "Track \(i + 1) “\(n)”",
+                                    children: [radio, nameField]))
+        }
+        for r in radios { r.onPress = { for x in radios { x.stringValue = (x === r) ? "1" : "0" } } }
+        let hdr = FakeAXNode(role: "AXGroup", description: "Tracks header", children: items)
+        let arrange = FakeAXNode(role: "AXWindow", title: "p - Tracks", children: [hdr])
+        return FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [arrange]))
+    }
+
+    func testSelectTrackFocusesExactlyOne() async {
+        let (_, reg) = await makeDaemon(headersTree(["vox", "Rugrats", "bass"], focusedIndex: 0))
+        let (json, isErr) = await callJSON(reg, "select_track", ["name": .string("Rugrats")])
+        XCTAssertFalse(isErr)
+        XCTAssertTrue(json.contains("\"selected\":\"Rugrats\""), json)
+        XCTAssertTrue(json.contains("\"confirmed\":true"), json)
+    }
+
+    func testSelectTrackUnknownNameErrors() async {
+        let (_, reg) = await makeDaemon(headersTree(["vox", "bass"], focusedIndex: 0))
+        let (json, isErr) = await callJSON(reg, "select_track", ["name": .string("nope")])
+        XCTAssertTrue(isErr)
+        XCTAssertTrue(json.contains("vox") && json.contains("bass"), json)   // lists available
+    }
 }

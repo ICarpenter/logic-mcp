@@ -497,6 +497,23 @@ public actor AXBridge {
         descendant(of: item, role: "AXRadioButton", description: "Has Focus")
     }
 
+    /// The arrange header whose parsed name case-insensitively equals `named`, with its Has Focus radio.
+    public func arrangeHeader(named: String) -> (item: AXHandle, focus: AXHandle?)? {
+        guard let hit = arrangeHeaderItems().first(where: {
+            $0.name.caseInsensitiveCompare(named) == .orderedSame
+        }) else { return nil }
+        return (hit.item, hasFocusRadio(in: hit.item))
+    }
+
+    /// The set of currently-focused header names (Has Focus == "1"). Read AFTER a select to confirm
+    /// exactly one — the delete guard depends on this being unambiguous.
+    public func focusedTrackNames() -> [String] {
+        arrangeHeaderItems().compactMap { h in
+            guard let r = hasFocusRadio(in: h.item), p.string(.value, of: r) == "1" else { return nil }
+            return h.name
+        }
+    }
+
     /// `Track 2 “Rugrats”` → `Rugrats`; nil if `desc` is not a track-header wrapper.
     nonisolated static func parseTrackHeaderName(_ desc: String) -> String? {
         guard let open = desc.firstIndex(of: "“"), let close = desc.lastIndex(of: "”"), open < close

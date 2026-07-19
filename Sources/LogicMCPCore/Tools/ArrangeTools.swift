@@ -102,6 +102,41 @@ public struct SetPlayheadTool: LogicTool {
     }
 }
 
+/// Press the named track's Has Focus radio and confirm — via a fresh re-read — that EXACTLY that
+/// track is now focused. Returns true iff confirmed. Throws layer:"ax" (listing names) if the track
+/// name is unknown. The delete/rename guard depends on this: never mutate on an unconfirmed selection.
+func selectTrackConfirmed(_ daemon: Daemon, _ name: String) async throws -> Bool {
+    guard await daemon.ax.arrangeWindow() != nil else {
+        throw ToolFailure(error: "no arrange window — is a project open in Logic?", layer: "ax",
+                          expected: "an AXWindow titled \"… - Tracks\"", observed: "none")
+    }
+    let names = await daemon.ax.arrangeHeaderItems().map(\.name)
+    guard let header = await daemon.ax.arrangeHeader(named: name), let focus = header.focus else {
+        throw ToolFailure(error: "no track '\(name)' in the arrange headers", layer: "ax",
+                          expected: "one of: \(names.joined(separator: ", "))", observed: "no match")
+    }
+    try await daemon.ax.press(focus)
+    // Selection re-renders headers; re-read from a fresh walk (never the captured handle).
+    let focused = await daemon.ax.focusedTrackNames()
+    return focused.count == 1 && focused[0].caseInsensitiveCompare(name) == .orderedSame
+}
+
+public struct SelectTrackTool: LogicTool {
+    public let name = "select_track"
+    public let description = "Select (focus) a track by name in Logic's arrange area, via the track header's Has Focus control, confirmed by re-reading that exactly that track is focused. This is what makes delete_track safe. Case-insensitive."
+    public let inputSchema: Value = .object([
+        "type": .string("object"),
+        "properties": .object(["name": .object(["type": .string("string")])]),
+        "required": .array([.string("name")]),
+    ])
+    let daemon: Daemon
+    public func invoke(_ args: [String: Value]) async throws -> Value {
+        let name = try requireString(args, "name", tool: name)
+        let confirmed = try await selectTrackConfirmed(daemon, name)
+        return .object(["selected": .string(name), "confirmed": .bool(confirmed)])
+    }
+}
+
 public struct SetKeySignatureTool: LogicTool {
     public let name = "set_key_signature"
     public let description = "Set the project key signature via Logic's control-bar popup (e.g. 'C Major', 'A Minor'), verified against the popup's displayed value."
