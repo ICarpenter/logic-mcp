@@ -90,41 +90,20 @@ final class StructureToolTests: XCTestCase {
         }
     }
 
-    // MARK: - delete_track / undo_structural
+    // MARK: - delete_track (DISABLED — Phase 5 Task 0 confirmed the AX selection wall)
     //
-    // Safety model (Fixtures/ax/selection.txt, resolved 2026-07-13): AX cannot change Logic's
-    // track selection — AXPress on a mixer strip is unsupported (-25200) and
-    // AXSetValue(AXSelected) returns success while changing nothing. Since `Track ▸ Delete Track`
-    // deletes the SELECTED track, a tool that pressed a strip and then Delete Track would delete
-    // whatever track the user last selected in Logic, not the requested one — a wrong-track
-    // destructive bug caught live on real Logic. `delete_track` is therefore DISABLED: it always
-    // throws a structured error and must never press the strip or "Track ▸ Delete Track" at all.
-    // These fakes still model the (never-invoked-by-the-tool) press sequence that WOULD delete —
-    // pressing the "scratch" strip records it as the current selection, and pressing "Delete
-    // Track" removes the selection from the mixer AXLayoutArea — so the "nothing was removed"
-    // regression guard below is actually exercising a fake that COULD delete, proving the guard
-    // would fail if delete_track were re-enabled.
+    // Old safety model (Fixtures/ax/selection.txt, resolved 2026-07-13): AX could not change
+    // Logic's track selection at all, so `delete_track` was permanently DISABLED — a tool that
+    // pressed a strip and then "Delete Track" would delete whatever track the user last selected
+    // in Logic, not the requested one — a wrong-track destructive bug caught live on real Logic.
+    // A Phase 5 re-enable attempt (via a confirmed Has-Focus press) was tried, but a live Task 0
+    // probe proved the arrange header's Has Focus control is a read-only status indicator —
+    // AXPress on it is a no-op — so selection genuinely cannot be confirmed via AX. delete_track
+    // stays permanently disabled; see `testDeleteTrackIsDisabled` below.
 
-    /// Track ▸ Delete Track removes the currently-selected strip from the mixer area.
-    func providerDeletable(_ trackName: String) -> FakeAXProvider {
-        let scratch = FakeAXNode(role: "AXLayoutItem", description: trackName)
-        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [
-            FakeAXNode(role: "AXLayoutItem", description: "vox"), scratch,
-        ])
-        let window = FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])
-        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
-        var selected: FakeAXNode?
-        scratch.onPress = { selected = scratch }
-        p.makeMenuBar([
-            (bar: "Track", items: [(title: "Delete Track", onPress: {
-                if let s = selected { area.children.removeAll { $0 === s } }
-            })]),
-        ])
-        return p
-    }
-
-    /// Same as `providerDeletable`, plus Edit ▸ Undo re-appends whichever strip "Delete Track"
-    /// last removed.
+    /// Mixer-only fixture (no arrange window) — used just to exercise `Edit ▸ Undo` restoring a
+    /// strip that `Track ▸ Delete Track` removed, entirely through `daemon.menu` (bypassing
+    /// `DeleteTrackTool`, whose confirm guard needs an arrange window this fixture doesn't build).
     func providerDeletableWithUndo(_ trackName: String) -> FakeAXProvider {
         let scratch = FakeAXNode(role: "AXLayoutItem", description: trackName)
         let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [
@@ -147,56 +126,10 @@ final class StructureToolTests: XCTestCase {
         return p
     }
 
-    /// THE regression guard: delete_track must NEVER delete, because AX cannot select a track
-    /// (selection.txt) and `Track ▸ Delete Track` acts on whatever IS selected. `providerDeletable`
-    /// models a fake that WOULD delete "scratch" if the tool pressed the strip then "Delete
-    /// Track" — so asserting the strip survives is a real guard, not a vacuous one: if
-    /// `delete_track` were re-enabled to press-then-delete, this assertion would fail.
-    func testDeleteTrackNeverDeletes() async throws {
-        var deletePressed = false
-        let p = providerDeletable("scratch")
-        // Instrument the fake's "Delete Track" menu item so we can also assert it was never
-        // reached at all, not just that its effect (strip removal) didn't happen.
-        if let bar = p.menuBarNode {
-            for barItem in bar.children where barItem.title == "Track" {
-                for menu in barItem.children {
-                    for item in menu.children where item.title == "Delete Track" {
-                        let original = item.onPress
-                        item.onPress = { deletePressed = true; original?() }
-                    }
-                }
-            }
-        }
-        let d = await daemon(p)
-        let namesBefore = try await d.axMixer.syncTracks()
-        do {
-            _ = try await DeleteTrackTool(daemon: d).invoke(["name": .string("scratch")])
-            XCTFail("expected a not-available ToolFailure")
-        } catch let f as ToolFailure {
-            XCTAssertEqual(f.layer, "ax")
-            XCTAssertTrue(f.error.contains("not available"), "error should say delete_track is not available: \(f.error)")
-        }
-        XCTAssertFalse(deletePressed, "delete_track must never press Track ▸ Delete Track")
-        let namesAfter = try await currentTrackNames(d)
-        XCTAssertEqual(namesAfter, namesBefore, "delete_track must not change the mixer's track list")
-        XCTAssertTrue(namesAfter.contains("scratch"), "the target track must still be present after delete_track")
-    }
-
-    func testDeleteTrackUnknownTrackErrorsAX() async throws {
-        let d = await daemon(providerDeletable("scratch"))
-        _ = try await d.axMixer.syncTracks()
-        do {
-            _ = try await DeleteTrackTool(daemon: d).invoke(["name": .string("nope")])
-            XCTFail("expected a track-not-found ToolFailure")
-        } catch let f as ToolFailure {
-            XCTAssertEqual(f.layer, "ax")   // find() throws layer:"ax" for unknown track
-        }
-    }
-
-    /// undo_structural is unaffected by the delete_track disable — it just drives Edit ▸ Undo and
-    /// settle-polls the track list. Since delete_track itself no longer presses anything, this
-    /// test exercises the deletion+undo sequence directly through `daemon.menu` (bypassing the
-    /// now-disabled tool) so undo_structural's own behavior stays covered.
+    /// undo_structural just drives Edit ▸ Undo and settle-polls the track list — exercise the
+    /// deletion+undo sequence directly through `daemon.menu` (bypassing `DeleteTrackTool`'s
+    /// confirm guard, which needs an arrange window this fixture doesn't build) so
+    /// undo_structural's own behavior stays covered independent of delete_track's selection story.
     func testUndoStructuralRestores() async throws {
         // fake: pressing "scratch" selects it, pressing "Delete Track" removes the selection,
         // pressing "Undo" re-adds the last removed strip.
@@ -210,6 +143,58 @@ final class StructureToolTests: XCTestCase {
         _ = try await UndoStructuralTool(daemon: d).invoke([:])
         names = try await currentTrackNames(d)
         XCTAssertTrue(names.contains("scratch"), "undo_structural should restore the deleted strip")
+    }
+
+    /// Fixture for the zero-actuation tests below: a mixer with strips ["vox", "Rugrats"] AND a
+    /// `Track ▸ Delete Track` menu item WIRED to actually remove "Rugrats" from the mixer
+    /// `AXLayoutArea "Mixer"` on press — mirrors `provider()`'s menu-wiring pattern above, just for
+    /// "Delete Track" instead of "New Audio Track". If `DeleteTrackTool` ever regressed into
+    /// actually pressing Delete Track (defeating its own guard), this wiring makes that visible as
+    /// a strip disappearing — a silent "throws but presses anyway" bug wouldn't be caught by
+    /// asserting the throw alone.
+    func providerWithWiredDeleteTrackMenu() -> FakeAXProvider {
+        let area = FakeAXNode(role: "AXLayoutArea", description: "Mixer", children: [
+            FakeAXNode(role: "AXLayoutItem", description: "vox"),
+            FakeAXNode(role: "AXLayoutItem", description: "Rugrats"),
+        ])
+        let window = FakeAXNode(role: "AXWindow", title: "mcp_test - Mixer: Tracks", children: [area])
+        let p = FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [window]))
+        let deleteItem = FakeAXNode(role: "AXMenuItem", title: "Delete Track")
+        deleteItem.onPress = { area.children.removeAll { $0.description == "Rugrats" } }
+        let menu = FakeAXNode(role: "AXMenu", children: [deleteItem])
+        p.menuBarNode = FakeAXNode(role: "AXMenuBar",
+            children: [FakeAXNode(role: "AXMenuBarItem", title: "Track", children: [menu])])
+        return p
+    }
+
+    /// delete_track is permanently disabled (Task 0: AX cannot confirm track selection) — it must
+    /// always throw a `layer: "ax"` ToolFailure and never touch the mixer, even for a known track.
+    /// Zero actuation is the load-bearing assertion: the fixture's "Delete Track" menu item WOULD
+    /// remove "Rugrats" if pressed, so the guard failing would show up as the strip vanishing.
+    func testDeleteTrackIsDisabled() async throws {
+        let d = await daemon(providerWithWiredDeleteTrackMenu())
+        do {
+            _ = try await DeleteTrackTool(daemon: d).invoke(["name": .string("Rugrats")])
+            XCTFail("expected a ToolFailure")
+        } catch let f as ToolFailure {
+            XCTAssertEqual(f.layer, "ax")
+        }
+        let names = try await currentTrackNames(d)
+        XCTAssertTrue(names.contains("Rugrats"), "delete_track must press nothing — 'Rugrats' should still be in the mixer")
+    }
+
+    /// delete_track resolves the track via `mixerStrip(named:)` BEFORE throwing its "not available"
+    /// error, so an unknown name should surface `AXBridge.find`'s own `layer: "ax"` error instead of
+    /// silently swallowing it — restores the unknown-name coverage dropped when this test was
+    /// trimmed to a bare throw check.
+    func testDeleteTrackUnknownNameStillThrowsAXError() async throws {
+        let d = await daemon(providerWithWiredDeleteTrackMenu())
+        do {
+            _ = try await DeleteTrackTool(daemon: d).invoke(["name": .string("nope")])
+            XCTFail("expected a ToolFailure")
+        } catch let f as ToolFailure {
+            XCTAssertEqual(f.layer, "ax")
+        }
     }
 
     // MARK: - set_output (SEARCH-driven routing popup)

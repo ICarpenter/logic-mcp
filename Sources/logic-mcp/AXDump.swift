@@ -16,6 +16,14 @@ struct AXDump: AsyncParsableCommand {
         switch mode {
         case "tree":
             for w in p.windows() { dump(p, w, depth: 0, maxDepth: 5) }
+        case "deep":
+            // Diagnostic: dump a window whose title contains args[1], to depth args[2] (default 12).
+            // Read-only; used to probe the arrange-canvas subtree the depth-5 `tree` cap cuts off.
+            let needle = (args.count >= 2 ? args[1] : "").lowercased()
+            let maxD = (args.count >= 3 ? Int(args[2]) : nil) ?? 12
+            for w in p.windows() where (p.string(.title, of: w) ?? "").lowercased().contains(needle) {
+                dump(p, w, depth: 0, maxDepth: maxD)
+            }
         case "strip", "send":
             guard args.count >= 2, let strip = findStrip(p, named: args[1]) else {
                 print("strip '\(args.dropFirst().first ?? "?")' not found"); return
@@ -73,6 +81,61 @@ struct AXDump: AsyncParsableCommand {
                 for w in p.windows() { dump(p, w, depth: 0, maxDepth: 9) }
             }
             try? p.perform(.cancel, on: btn)   // dismiss so we don't leave a modal popup hanging
+        case "press":
+            // Diagnostic: find the first element whose description CONTAINS args[2] inside a window
+            // whose title contains args[1], press it, settle, then dump that window to depth args[3]
+            // (default 18). Read/actuate for feasibility probes (e.g. toggle "List Editors").
+            let needle = (args.count >= 2 ? args[1] : "").lowercased()
+            var descNeedle = (args.count >= 3 ? args[2] : "").lowercased()
+            var exact = false
+            if descNeedle.hasPrefix("=") { exact = true; descNeedle.removeFirst() }
+            let maxD = (args.count >= 4 ? Int(args[3]) : nil) ?? 18
+            let roleFilter = (args.count >= 5 ? args[4] : nil)   // e.g. "AXRadioButton" to disambiguate
+            let occurrence = (args.count >= 6 ? Int(args[5]) : nil) ?? 0   // 0-based: which match to press
+            let wins = p.windows().filter { (p.string(.title, of: $0) ?? "").lowercased().contains(needle) }
+            let matches = wins.flatMap { allByDescription(p, in: $0, contains: descNeedle, role: roleFilter, exact: exact) }
+            guard occurrence < matches.count else {
+                print("only \(matches.count) match(es) for '\(descNeedle)' (role \(roleFilter ?? "any")); wanted index \(occurrence)"); return
+            }
+            let target = matches[occurrence]
+            print("pressing: \(p.string(.role, of: target) ?? "?") desc=\(p.string(.description, of: target).debugDescription) value=\(p.string(.value, of: target).debugDescription)")
+            try? p.perform(.press, on: target)
+            usleep(900_000)
+            for w in wins { dump(p, w, depth: 0, maxDepth: maxD) }
+        case "setvalue":
+            // Diagnostic: AXSetValue a number on a located element, then re-read — reveals whether the
+            // control is ABSOLUTE (lands at v) or ±1-NUDGE, and its min/max/settable. Task 0 gate.
+            guard args.count >= 4, let v = Double(args[3]) else {
+                print("usage: setvalue <winNeedle> <=desc|desc> <number> [role]"); return
+            }
+            let needle = args[1].lowercased()
+            var desc = args[2].lowercased(); var exact = false
+            if desc.hasPrefix("=") { exact = true; desc.removeFirst() }
+            let role = args.count >= 5 ? args[4] : nil
+            let wins = p.windows().filter { (p.string(.title, of: $0) ?? "").lowercased().contains(needle) }
+            guard let target = wins.compactMap({ firstByDescription(p, in: $0, contains: desc, role: role, exact: exact) }).first else {
+                print("no element desc containing '\(desc)' in '\(needle)'"); return
+            }
+            print("before: value=\(p.number(of: target).debugDescription) settable=\(p.isSettable(target)) minmax=\(p.minMax(of: target))")
+            try? p.setNumber(v, of: target)
+            usleep(400_000)
+            print("after setNumber(\(v)): value=\(p.number(of: target).debugDescription)")
+        case "setstring":
+            // Diagnostic: AXSetValue a string on a located element (e.g. a track name field), then
+            // re-read — reveals whether the edit COMMITS no-focus. Task 0 rename gate.
+            guard args.count >= 4 else { print("usage: setstring <winNeedle> <=desc|desc> <string> [role]"); return }
+            let needle = args[1].lowercased()
+            var desc = args[2].lowercased(); var exact = false
+            if desc.hasPrefix("=") { exact = true; desc.removeFirst() }
+            let role = args.count >= 5 ? args[4] : nil
+            let wins = p.windows().filter { (p.string(.title, of: $0) ?? "").lowercased().contains(needle) }
+            guard let target = wins.compactMap({ firstByDescription(p, in: $0, contains: desc, role: role, exact: exact) }).first else {
+                print("no element desc containing '\(desc)' in '\(needle)'"); return
+            }
+            print("before: value=\(p.string(.value, of: target).debugDescription) desc=\(p.string(.description, of: target).debugDescription)")
+            try? p.setString(args[3], of: target)
+            usleep(500_000)
+            print("after setString('\(args[3])'): value=\(p.string(.value, of: target).debugDescription) desc=\(p.string(.description, of: target).debugDescription)")
         case "menu":
             guard args.count >= 2 else { print("usage: axdump menu <Track|File|Mix|Edit>"); return }
             guard let mb = p.menuBar() else { print("no menu bar"); return }
@@ -112,6 +175,31 @@ struct AXDump: AsyncParsableCommand {
         let ni = kids.index(after: gi)
         guard ni < kids.endIndex, p.string(.role, of: kids[ni]) == "AXButton" else { return nil }
         return kids[ni]
+    }
+
+    /// Collect ALL elements matching the description (+ optional role/exact), in tree order — so a
+    /// probe can press the Nth occurrence (e.g. the 2nd "Has Focus" radio = the 2nd track).
+    private func allByDescription(_ p: SystemAXProvider, in root: AXHandle, contains: String, role: String? = nil, exact: Bool = false) -> [AXHandle] {
+        var out: [AXHandle] = []
+        func rec(_ h: AXHandle, _ d: Int) {
+            if d > 16 { return }
+            if let desc = p.string(.description, of: h)?.lowercased(), (exact ? desc == contains : desc.contains(contains)),
+               role == nil || p.string(.role, of: h) == role { out.append(h) }
+            for c in p.children(of: h) { rec(c, d + 1) }
+        }
+        rec(root, 0)
+        return out
+    }
+
+    private func firstByDescription(_ p: SystemAXProvider, in root: AXHandle, contains: String, role: String? = nil, exact: Bool = false) -> AXHandle? {
+        func rec(_ h: AXHandle, _ d: Int) -> AXHandle? {
+            if d > 14 { return nil }
+            if let desc = p.string(.description, of: h)?.lowercased(), (exact ? desc == contains : desc.contains(contains)),
+               role == nil || p.string(.role, of: h) == role { return h }
+            for c in p.children(of: h) { if let f = rec(c, d + 1) { return f } }
+            return nil
+        }
+        return rec(root, 0)
     }
 
     private func firstSearchField(_ p: SystemAXProvider, in roots: [AXHandle]) -> AXHandle? {
