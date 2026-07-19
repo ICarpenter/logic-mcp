@@ -150,9 +150,43 @@ public struct SetCycleTool: LogicTool {
     ])
     let daemon: Daemon
     public func invoke(_ args: [String: Value]) async throws -> Value {
+        // Fix 1 (atomicity): parse and validate/resolve EVERYTHING for the whole call before any
+        // press or nudge runs, so a failing range never leaves an already-applied toggle behind.
+        let enabled = args["enabled"]?.boolValue
+        let rangeRequested = args["startBar"] != nil || args["endBar"] != nil
+
+        var s = 0, e = 0
+        if rangeRequested {
+            guard let sv = args["startBar"]?.coercedInt, let ev = args["endBar"]?.coercedInt,
+                  sv >= 1, ev > sv else {
+                throw ToolFailure(error: "set_cycle needs both startBar and endBar, with endBar > startBar", layer: "daemon")
+            }
+            s = sv; e = ev
+        }
+
+        guard enabled != nil || rangeRequested else {
+            throw ToolFailure(error: "set_cycle needs 'enabled' and/or 'startBar'+'endBar'", layer: "daemon")
+        }
+
+        var rangeHandles: (thumb: AXHandle, startM: AXHandle, endM: AXHandle, barS: AXHandle, beatS: AXHandle)?
+        if rangeRequested {
+            guard let thumb = await daemon.ax.playheadThumb(),
+                  let startM = await daemon.ax.cycleMarker("Start Marker"),
+                  let endM = await daemon.ax.cycleMarker("End Marker"),
+                  let barS = await daemon.ax.controlBarControl(role: "AXSlider", description: "bar"),
+                  let beatS = await daemon.ax.controlBarControl(role: "AXSlider", description: "beat"),
+                  await daemon.ax.isSettable(startM), await daemon.ax.isSettable(endM) else {
+                throw ToolFailure(error: "cycle range-by-bar is not available on this Logic build", layer: "ax",
+                                  expected: "settable Start/End Marker indicators sharing the playhead-thumb encoding",
+                                  observed: "markers not settable — set the cycle range in Logic, or use 'enabled' only")
+            }
+            rangeHandles = (thumb, startM, endM, barS, beatS)
+        }
+
+        // All preconditions passed — now (and only now) do we actually mutate anything.
         var result: [String: Value] = [:]
 
-        if let enabled = args["enabled"]?.boolValue {
+        if let enabled {
             let cycle = try await arrangeControl(daemon, role: "AXCheckBox", description: "Cycle", tool: name)
             let now = (await daemon.ax.stringValue(.value, of: cycle)) == "1"
             if now != enabled { try await daemon.ax.press(cycle) }
@@ -160,38 +194,28 @@ public struct SetCycleTool: LogicTool {
             result["enabled"] = .bool(after)
         }
 
-        if let s = args["startBar"]?.coercedInt, let e = args["endBar"]?.coercedInt {
-            guard s >= 1, e > s else { throw ToolFailure(error: "'startBar' ≥ 1 and 'endBar' > 'startBar' required", layer: "daemon") }
-            guard let thumb = await daemon.ax.playheadThumb(),
-                  let startM = await daemon.ax.cycleMarker("Start Marker"),
-                  let endM = await daemon.ax.cycleMarker("End Marker"),
-                  await daemon.ax.isSettable(startM), await daemon.ax.isSettable(endM) else {
-                throw ToolFailure(error: "cycle range-by-bar is not available on this Logic build", layer: "ax",
-                                  expected: "settable Start/End Marker indicators sharing the playhead-thumb encoding",
-                                  observed: "markers not settable — set the cycle range in Logic, or use 'enabled' only")
-            }
+        if let (thumb, startM, endM, barS, beatS) = rangeHandles {
             // Rosetta stone: move the playhead to a bar, read its encoded timeline position, and write
             // that raw to the marker — no need to decode Logic's internal tick unit.
             func rawForBar(_ bar: Int) async throws -> Double {
-                guard let barS = await daemon.ax.controlBarControl(role: "AXSlider", description: "bar") else {
-                    throw ToolFailure(error: "no bar slider", layer: "ax", expected: "playhead bar slider", observed: "none")
-                }
                 _ = try await daemon.ax.nudgeToRaw(barS, target: Double(bar), maxSteps: 1200)
+                // Fix 2: also land on the bar's downbeat (beat 1) — mirrors SetPlayheadTool's
+                // bar+beat pair — so a stale beat/tick offset from a prior position isn't carried
+                // into the recorded raw.
+                _ = try await daemon.ax.nudgeToRaw(beatS, target: 1, maxSteps: 64)
                 return await daemon.ax.value(of: thumb) ?? 0
             }
             let rawStart = try await rawForBar(s)
             let rawEnd = try await rawForBar(e)
-            _ = try await daemon.ax.nudgeToRaw(startM, target: rawStart, maxSteps: 4)
-            _ = try await daemon.ax.nudgeToRaw(endM, target: rawEnd, maxSteps: 4)
+            // Markers are assumed absolute-set (the Rosetta approach requires it): one AXSetValue lands the raw, so a small step cap is correct here — NOT derived from the marker's own encoded range (~2e15), which would make maxSteps astronomically large and effectively hang; if a marker turns out non-absolute, rangeVerified below honestly reports false rather than looping.
+            _ = try await daemon.ax.nudgeToRaw(startM, target: rawStart, maxSteps: 8)
+            _ = try await daemon.ax.nudgeToRaw(endM, target: rawEnd, maxSteps: 8)
             let gotStart = await daemon.ax.value(of: startM) ?? 0
             let gotEnd = await daemon.ax.value(of: endM) ?? 0
             result["startBar"] = .int(s); result["endBar"] = .int(e)
             result["rangeVerified"] = .bool(abs(gotStart - rawStart) < 1 && abs(gotEnd - rawEnd) < 1)
         }
 
-        if result.isEmpty {
-            throw ToolFailure(error: "set_cycle needs 'enabled' and/or 'startBar'+'endBar'", layer: "daemon")
-        }
         return .object(result)
     }
 }
