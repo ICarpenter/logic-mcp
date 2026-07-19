@@ -50,4 +50,36 @@ final class ArrangeToolTests: XCTestCase {
         XCTAssertTrue(isErr)
         XCTAssertTrue(json.contains("arrange window"), json)
     }
+
+    private func popupTree(desc: String, initial: String, choices: [String]) -> (FakeAXProvider, FakeAXNode) {
+        let popup = FakeAXNode(role: "AXPopUpButton", description: desc, stringValue: initial)
+        let items = choices.map { c -> FakeAXNode in
+            let item = FakeAXNode(role: "AXMenuItem", title: c)
+            item.onPress = { [weak popup] in popup?.stringValue = c }   // Logic commits the popup value
+            return item
+        }
+        popup.children = [FakeAXNode(role: "AXMenu", children: items)]
+        let cbInner = FakeAXNode(role: "AXGroup", description: "Control Bar", children: [popup])
+        let cbOuter = FakeAXNode(role: "AXGroup", description: "Control Bar", children: [cbInner])
+        let arrange = FakeAXNode(role: "AXWindow", title: "p - Tracks", children: [cbOuter])
+        return (FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [arrange])), popup)
+    }
+
+    func testSetTimeSignature() async {
+        let (provider, _) = popupTree(desc: "Time Signature", initial: "4/4", choices: ["3/4", "4/4", "6/8"])
+        let (_, reg) = await makeDaemon(provider)
+        let (json, isErr) = await callJSON(reg, "set_time_signature", ["signature": .string("6/8")])
+        XCTAssertFalse(isErr)
+        // JSONEncoder (unconfigured, used throughout ToolRegistry) escapes "/" as "\/" — accept either form.
+        XCTAssertTrue(json.contains("\"display\":\"6/8\"") || json.contains("\"display\":\"6\\/8\""), json)
+        XCTAssertTrue(json.contains("\"verified\":true"), json)
+    }
+
+    func testSetKeySignatureUnknownChoiceErrorsWithList() async {
+        let (provider, _) = popupTree(desc: "Key Signature", initial: "C Major", choices: ["C Major", "A Minor"])
+        let (_, reg) = await makeDaemon(provider)
+        let (json, isErr) = await callJSON(reg, "set_key_signature", ["key": .string("Z Lydian")])
+        XCTAssertTrue(isErr)
+        XCTAssertTrue(json.contains("A Minor"), json)   // error lists the live choices
+    }
 }

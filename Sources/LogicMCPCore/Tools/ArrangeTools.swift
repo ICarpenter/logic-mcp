@@ -39,3 +39,45 @@ public struct SetTempoTool: LogicTool {
         return .object(["tempo": .double(achieved), "verified": .bool(verified)])
     }
 }
+
+/// Shared: select a choice in a named control-bar popup, verified against the popup's re-read value.
+private func selectControlBarPopup(_ daemon: Daemon, description: String, choice: String, tool: String) async throws -> Value {
+    let popup = try await arrangeControl(daemon, role: "AXPopUpButton", description: description, tool: tool)
+    try await daemon.menu.selectEnumChoice(from: popup, choice: choice)   // throws layer:"ax" listing choices on a miss
+    let now = await daemon.ax.stringValue(.value, of: popup) ?? ""
+    let verified = now.range(of: choice, options: .caseInsensitive) != nil
+        || choice.range(of: now, options: .caseInsensitive) != nil
+    return .object(["display": .string(now), "verified": .bool(verified)])
+}
+
+public struct SetTimeSignatureTool: LogicTool {
+    public let name = "set_time_signature"
+    public let description = "Set the project time signature via Logic's control-bar popup (e.g. '4/4', '6/8'), verified against the popup's displayed value."
+    public let inputSchema: Value = .object([
+        "type": .string("object"),
+        "properties": .object(["signature": .object(["type": .string("string"),
+            "description": .string("e.g. '4/4', '3/4', '6/8'")])]),
+        "required": .array([.string("signature")]),
+    ])
+    let daemon: Daemon
+    public func invoke(_ args: [String: Value]) async throws -> Value {
+        let sig = try requireString(args, "signature", tool: name)
+        return try await selectControlBarPopup(daemon, description: "Time Signature", choice: sig, tool: name)
+    }
+}
+
+public struct SetKeySignatureTool: LogicTool {
+    public let name = "set_key_signature"
+    public let description = "Set the project key signature via Logic's control-bar popup (e.g. 'C Major', 'A Minor'), verified against the popup's displayed value."
+    public let inputSchema: Value = .object([
+        "type": .string("object"),
+        "properties": .object(["key": .object(["type": .string("string"),
+            "description": .string("e.g. 'C Major', 'A Minor', 'G Major'")])]),
+        "required": .array([.string("key")]),
+    ])
+    let daemon: Daemon
+    public func invoke(_ args: [String: Value]) async throws -> Value {
+        let key = try requireString(args, "key", tool: name)
+        return try await selectControlBarPopup(daemon, description: "Key Signature", choice: key, tool: name)
+    }
+}
