@@ -240,11 +240,10 @@ public struct GetArrangeStateTool: LogicTool {
             guard let h = await daemon.ax.controlBarControl(role: "AXPopUpButton", description: desc) else { return nil }
             return await daemon.ax.stringValue(.value, of: h)
         }
-        let cycling = (await {
-            guard let c = await daemon.ax.controlBarControl(role: "AXCheckBox", description: "Cycle") else { return nil as String? }
-            return await daemon.ax.stringValue(.value, of: c)
-        }()) == "1"
-        var obj: [String: Value] = ["cycling": .bool(cycling)]
+        var obj: [String: Value] = [:]
+        if let cycleCtl = await daemon.ax.controlBarControl(role: "AXCheckBox", description: "Cycle") {
+            obj["cycling"] = .bool((await daemon.ax.stringValue(.value, of: cycleCtl)) == "1")
+        }
         if let t = await num("Tempo") { obj["tempo"] = .double(t) }
         if let ts = await popup("Time Signature") { obj["timeSignature"] = .string(ts) }
         if let ks = await popup("Key Signature") { obj["keySignature"] = .string(ks) }

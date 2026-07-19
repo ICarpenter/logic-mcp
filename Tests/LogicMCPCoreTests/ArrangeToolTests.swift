@@ -166,7 +166,7 @@ final class ArrangeToolTests: XCTestCase {
     }
 
     func testGetArrangeState() async {
-        // Reuse a full tree: tempo 120, time 4/4, key C Major, playhead bar 1 beat 1, cycle off.
+        // Reuse a full tree: tempo 128, time 6/8, key A Minor, playhead bar 3 beat 2, cycle on.
         let tempo = FakeAXNode(role: "AXSlider", description: "Tempo", value: 128, settable: true, minValue: 5, maxValue: 990)
         let bar = FakeAXNode(role: "AXSlider", description: "bar", value: 3, settable: true, minValue: 1, maxValue: 999)
         let beat = FakeAXNode(role: "AXSlider", description: "beat", value: 2, settable: true, minValue: 1, maxValue: 16)
