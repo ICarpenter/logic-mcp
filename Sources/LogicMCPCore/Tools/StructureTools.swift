@@ -58,7 +58,7 @@ public struct RenameTrackTool: LogicTool {
 
 public struct DeleteTrackTool: LogicTool {
     public let name = "delete_track"
-    public let description = "DISABLED — not available via AX in this release. Always returns a structured error and NEVER deletes anything: AX cannot change Logic's track selection (AXPress on a mixer strip is unsupported; AXSetValue(AXSelected) returns success but changes nothing — see Fixtures/ax/selection.txt), yet `Track ▸ Delete Track` deletes the SELECTED track. A tool that pressed the target strip and then Delete Track would actually delete whatever track the user last selected in Logic — a wrong-track destructive bug. Delete tracks in Logic directly."
+    public let description = "Delete a track by name. Selects it first (via the arrange header's Has Focus) and CONFIRMS exactly that track is focused before invoking Track ▸ Delete Track — so it never deletes the wrong track. Refuses if selection can't be confirmed. Reversible via undo_structural."
     public let inputSchema: Value = .object([
         "type": .string("object"),
         "properties": .object(["name": .object(["type": .string("string")])]),
@@ -67,18 +67,22 @@ public struct DeleteTrackTool: LogicTool {
     let daemon: Daemon
     public func invoke(_ args: [String: Value]) async throws -> Value {
         let name = try requireString(args, "name", tool: name)
-        // Resolve via AX FIRST so a bad/unknown track name still gives the precise
-        // AXBridge.find() error, not this blanket "not available" that would mask it.
-        let strip = try await daemon.mixerStrip(named: name)             // throws layer:"ax" if unknown
-        let resolved = await daemon.ax.read(strip).name
-        // MUST NOT press anything from here — no pressElement(strip), no
-        // pressMenuPath(["Track", "Delete Track"]). See selection.txt: AX cannot select a track,
-        // so Delete Track would act on whatever is currently selected in Logic, not `resolved`.
-        throw ToolFailure(
-            error: "delete_track is not available via AX in this release (it could delete the WRONG track)",
-            layer: "ax",
-            expected: "delete '\(resolved)' in Logic directly",
-            observed: "Logic's `Track ▸ Delete Track` deletes the SELECTED track, and AX cannot change Logic's track selection (AXPress on a strip is unsupported; AXSetValue(AXSelected) returns success but does nothing — see Fixtures/ax/selection.txt). Deleting would target whatever track is currently selected.")
+        // Guard: SELECT the named track and confirm EXACTLY it is focused. Never proceed otherwise —
+        // Track ▸ Delete Track acts on the SELECTED track, so an unconfirmed selection risks the
+        // wrong-track destructive bug that disabled this tool (see ax-findings.md selection notes).
+        let confirmed = try await selectTrackConfirmed(daemon, name)   // throws layer:"ax" if name unknown
+        guard confirmed else {
+            throw ToolFailure(error: "refusing to delete: could not confirm '\(name)' is the selected track", layer: "ax",
+                              expected: "exactly '\(name)' focused after select", observed: "selection unconfirmed — nothing deleted")
+        }
+        let before = Set(try await currentTrackNames(daemon))
+        try await daemon.menu.pressMenuPath(["Track", "Delete Track"])
+        let after = try await settleTracks(daemon) { names in !names.contains(name) || names.count < before.count }
+        guard !after.contains(name) else {
+            throw ToolFailure(error: "delete not confirmed", layer: "ax",
+                              expected: "'\(name)' gone from the mixer", observed: "still present")
+        }
+        return .object(["deleted": .bool(true), "track": .string(name)])
     }
 }
 
