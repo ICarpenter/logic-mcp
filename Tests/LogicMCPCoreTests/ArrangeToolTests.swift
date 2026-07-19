@@ -131,10 +131,15 @@ final class ArrangeToolTests: XCTestCase {
     /// read-only status indicator; AXPress on it is a no-op) — it must always return a structured
     /// error and never press anything.
     func testSelectTrackIsDisabled() async {
-        let (_, reg) = await makeDaemon(headersTree(["vox", "Rugrats", "bass"], focusedIndex: 0))
+        let (daemon, reg) = await makeDaemon(headersTree(["vox", "Rugrats", "bass"], focusedIndex: 0))
+        let before = await daemon.ax.focusedTrackNames()
         let (json, isErr) = await callJSON(reg, "select_track", ["name": .string("Rugrats")])
         XCTAssertTrue(isErr, json)
         XCTAssertTrue(json.contains("not available"), json)
+        // Zero actuation: the fake's Has-Focus radios are pressable (a regression that actually
+        // pressed one would flip which track is focused) — confirm focus is untouched.
+        let after = await daemon.ax.focusedTrackNames()
+        XCTAssertEqual(before, after, "select_track must actuate nothing — focus should be unchanged")
     }
 
     private func cycleTree(enabled: Bool) -> FakeAXProvider {

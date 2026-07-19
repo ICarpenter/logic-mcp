@@ -1,3 +1,4 @@
+import Foundation
 import MCP
 
 /// Resolve a named control-bar control or throw the standard "no arrange window / no control" error.
@@ -94,6 +95,10 @@ public struct SetPlayheadTool: LogicTool {
             throw ToolFailure(error: "playhead sliders not found in the Control Bar", layer: "ax",
                               expected: "AXSlider description=\"bar\" and \"beat\"", observed: "none")
         }
+        // maxSteps: 1200 is a hardcoded cap, not a derived range — the bar slider reports a rolling
+        // min/max WINDOW around the current position rather than the project's true bar span, so a
+        // real range can't be derived the way set_tempo derives one from minMax(of:). A target
+        // beyond current±1200 bars degrades gracefully to verified:false; it never crashes.
         let achievedBar = try await daemon.ax.nudgeToRaw(barS, target: Double(bar), maxSteps: 1200)
         let achievedBeat = try await daemon.ax.nudgeToRaw(beatS, target: Double(beat), maxSteps: 64)
         let verified = Int(achievedBar.rounded()) == bar && Int(achievedBeat.rounded()) == beat
@@ -134,8 +139,19 @@ public struct SetCycleTool: LogicTool {
             throw ToolFailure(error: "set_cycle requires 'enabled' (true/false)", layer: "daemon")
         }
         let cycle = try await arrangeControl(daemon, role: "AXCheckBox", description: "Cycle", tool: name)
-        let now = (await daemon.ax.stringValue(.value, of: cycle)) == "1"
-        if now != enabled { try await daemon.ax.press(cycle) }
+        let before = await daemon.ax.stringValue(.value, of: cycle)
+        let now = before == "1"
+        if now != enabled {
+            try await daemon.ax.press(cycle)
+            // Logic updates the checkbox value ASYNCHRONOUSLY — an immediate re-read right after the
+            // press is the "blind-press-then-read" bug class, so settle-poll instead of trusting it
+            // (mirrors AXMenuDriver.selectEnumChoice's settle pattern).
+            let deadline = ContinuousClock.now + .milliseconds(1500)
+            while ContinuousClock.now < deadline {
+                if await daemon.ax.stringValue(.value, of: cycle) != before { break }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+        }
         let after = (await daemon.ax.stringValue(.value, of: cycle)) == "1"
         return .object(["enabled": .bool(after)])
     }

@@ -460,14 +460,17 @@ public actor AXBridge {
 
     // MARK: - Arrange "Control Room" engine (Phase 5 Plan A)
 
-    /// Logic's arrange window: the AXWindow whose title ends "- Tracks". The mixer window ends
-    /// "Mixer: Tracks", so the suffix excludes it (and its Inspector mini-mixer). See ax-findings.md.
+    /// Logic's arrange window: the AXWindow whose title ends "- Tracks". The mixer window's title
+    /// ends "Mixer: Tracks" instead, so this suffix match selects the arrange window specifically
+    /// (the mini-mixer lives in the ARRANGE window's own Inspector, not the mixer window). See
+    /// ax-findings.md.
     public func arrangeWindow() -> AXHandle? {
         p.windows().first { (p.string(.title, of: $0) ?? "").hasSuffix("- Tracks") }
     }
 
-    /// The inner `AXGroup description="Control Bar"` in the arrange window — its children include the
-    /// Tempo slider, the Playhead bar/beat sliders, and the Time/Key Signature popups.
+    /// The Control Bar group in the arrange window (found via `descendant`, so callers needn't know
+    /// how deeply it's nested) — its children include the Tempo slider, the Playhead bar/beat
+    /// sliders, and the Time/Key Signature popups.
     public func controlBar() -> AXHandle? {
         guard let w = arrangeWindow() else { return nil }
         return descendant(of: w, role: "AXGroup", description: "Control Bar")
@@ -497,8 +500,8 @@ public actor AXBridge {
         descendant(of: item, role: "AXRadioButton", description: "Has Focus")
     }
 
-    /// The set of currently-focused header names (Has Focus == "1"). Read AFTER a select to confirm
-    /// exactly one — the delete guard depends on this being unambiguous.
+    /// The set of currently-focused header names (Has Focus == "1"). Read-only selection snapshot —
+    /// used by get_arrange_state's selectedTrack.
     public func focusedTrackNames() -> [String] {
         arrangeHeaderItems().compactMap { h in
             guard let r = hasFocusRadio(in: h.item), p.string(.value, of: r) == "1" else { return nil }
