@@ -150,8 +150,9 @@ public struct SetCycleTool: LogicTool {
     ])
     let daemon: Daemon
     public func invoke(_ args: [String: Value]) async throws -> Value {
-        // Fix 1 (atomicity): parse and validate/resolve EVERYTHING for the whole call before any
-        // press or nudge runs, so a failing range never leaves an already-applied toggle behind.
+        // Step 1 (up front, mutation-free): parse args and validate the range ARGS only — cheap
+        // shape-checking, no AX handle resolution yet. Handles are resolved fresh, immediately
+        // before use, in each block below — never captured here and reused past a mutation.
         let enabled = args["enabled"]?.boolValue
         let rangeRequested = args["startBar"] != nil || args["endBar"] != nil
 
@@ -168,7 +169,12 @@ public struct SetCycleTool: LogicTool {
             throw ToolFailure(error: "set_cycle needs 'enabled' and/or 'startBar'+'endBar'", layer: "daemon")
         }
 
-        var rangeHandles: (thumb: AXHandle, startM: AXHandle, endM: AXHandle, barS: AXHandle, beatS: AXHandle)?
+        var result: [String: Value] = [:]
+
+        // Step 2: range block FIRST — resolve every handle fresh and complete the whole range
+        // mutation BEFORE the toggle press below. Pressing Cycle is itself a mutation; a handle
+        // resolved earlier and used after it would be stale (CLAUDE.md "THE recurring bug class").
+        // A bad/unsupported range fails here, before any toggle has been touched — atomicity preserved.
         if rangeRequested {
             guard let thumb = await daemon.ax.playheadThumb(),
                   let startM = await daemon.ax.cycleMarker("Start Marker"),
@@ -177,31 +183,17 @@ public struct SetCycleTool: LogicTool {
                   let beatS = await daemon.ax.controlBarControl(role: "AXSlider", description: "beat"),
                   await daemon.ax.isSettable(startM), await daemon.ax.isSettable(endM) else {
                 throw ToolFailure(error: "cycle range-by-bar is not available on this Logic build", layer: "ax",
-                                  expected: "settable Start/End Marker indicators sharing the playhead-thumb encoding",
-                                  observed: "markers not settable — set the cycle range in Logic, or use 'enabled' only")
+                                  expected: "settable Start/End Marker indicators and bar/beat sliders sharing the playhead-thumb encoding",
+                                  observed: "markers or bar/beat sliders not settable/found — set the cycle range in Logic, or use 'enabled' only")
             }
-            rangeHandles = (thumb, startM, endM, barS, beatS)
-        }
 
-        // All preconditions passed — now (and only now) do we actually mutate anything.
-        var result: [String: Value] = [:]
-
-        if let enabled {
-            let cycle = try await arrangeControl(daemon, role: "AXCheckBox", description: "Cycle", tool: name)
-            let now = (await daemon.ax.stringValue(.value, of: cycle)) == "1"
-            if now != enabled { try await daemon.ax.press(cycle) }
-            let after = (await daemon.ax.stringValue(.value, of: cycle)) == "1"
-            result["enabled"] = .bool(after)
-        }
-
-        if let (thumb, startM, endM, barS, beatS) = rangeHandles {
             // Rosetta stone: move the playhead to a bar, read its encoded timeline position, and write
             // that raw to the marker — no need to decode Logic's internal tick unit.
             func rawForBar(_ bar: Int) async throws -> Double {
                 _ = try await daemon.ax.nudgeToRaw(barS, target: Double(bar), maxSteps: 1200)
-                // Fix 2: also land on the bar's downbeat (beat 1) — mirrors SetPlayheadTool's
-                // bar+beat pair — so a stale beat/tick offset from a prior position isn't carried
-                // into the recorded raw.
+                // Also land on the bar's downbeat (beat 1) — mirrors SetPlayheadTool's bar+beat
+                // pair — so a stale beat/tick offset from a prior position isn't carried into the
+                // recorded raw.
                 _ = try await daemon.ax.nudgeToRaw(beatS, target: 1, maxSteps: 64)
                 return await daemon.ax.value(of: thumb) ?? 0
             }
@@ -214,6 +206,16 @@ public struct SetCycleTool: LogicTool {
             let gotEnd = await daemon.ax.value(of: endM) ?? 0
             result["startBar"] = .int(s); result["endBar"] = .int(e)
             result["rangeVerified"] = .bool(abs(gotStart - rawStart) < 1 && abs(gotEnd - rawEnd) < 1)
+        }
+
+        // Step 3: enable-toggle block LAST — resolve the Cycle checkbox FRESH here, immediately
+        // before pressing it, so it's never a handle carried across the range mutation above.
+        if let enabled {
+            let cycle = try await arrangeControl(daemon, role: "AXCheckBox", description: "Cycle", tool: name)
+            let now = (await daemon.ax.stringValue(.value, of: cycle)) == "1"
+            if now != enabled { try await daemon.ax.press(cycle) }
+            let after = (await daemon.ax.stringValue(.value, of: cycle)) == "1"
+            result["enabled"] = .bool(after)
         }
 
         return .object(result)
