@@ -164,4 +164,27 @@ final class ArrangeToolTests: XCTestCase {
         XCTAssertFalse(isErr, json)
         XCTAssertTrue(json.contains("\"enabled\":true"), json)
     }
+
+    func testGetArrangeState() async {
+        // Reuse a full tree: tempo 120, time 4/4, key C Major, playhead bar 1 beat 1, cycle off.
+        let tempo = FakeAXNode(role: "AXSlider", description: "Tempo", value: 128, settable: true, minValue: 5, maxValue: 990)
+        let bar = FakeAXNode(role: "AXSlider", description: "bar", value: 3, settable: true, minValue: 1, maxValue: 999)
+        let beat = FakeAXNode(role: "AXSlider", description: "beat", value: 2, settable: true, minValue: 1, maxValue: 16)
+        let pos = FakeAXNode(role: "AXGroup", description: "Playhead Position", children: [bar, beat])
+        let time = FakeAXNode(role: "AXPopUpButton", description: "Time Signature", stringValue: "6/8")
+        let key = FakeAXNode(role: "AXPopUpButton", description: "Key Signature", stringValue: "A Minor")
+        let cycle = FakeAXNode(role: "AXCheckBox", description: "Cycle", stringValue: "1")
+        let cbInner = FakeAXNode(role: "AXGroup", description: "Control Bar", children: [tempo, pos, time, key, cycle])
+        let cbOuter = FakeAXNode(role: "AXGroup", description: "Control Bar", children: [cbInner])
+        let arrange = FakeAXNode(role: "AXWindow", title: "p - Tracks", children: [cbOuter])
+        let (_, reg) = await makeDaemon(FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [arrange])))
+        let (json, isErr) = await callJSON(reg, "get_arrange_state", [:])
+        XCTAssertFalse(isErr, json)
+        XCTAssertTrue(json.contains("\"tempo\":128"), json)
+        // JSONEncoder (unconfigured, used throughout ToolRegistry) escapes "/" as "\/" — accept either form.
+        XCTAssertTrue(json.contains("\"timeSignature\":\"6/8\"") || json.contains("\"timeSignature\":\"6\\/8\""), json)
+        XCTAssertTrue(json.contains("\"keySignature\":\"A Minor\""), json)
+        XCTAssertTrue(json.contains("\"bar\":3"), json)
+        XCTAssertTrue(json.contains("\"cycling\":true"), json)
+    }
 }

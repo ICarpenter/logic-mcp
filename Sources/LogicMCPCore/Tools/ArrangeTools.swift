@@ -222,6 +222,39 @@ public struct SetCycleTool: LogicTool {
     }
 }
 
+public struct GetArrangeStateTool: LogicTool {
+    public let name = "get_arrange_state"
+    public let description = "Read the arrange control bar live via Accessibility: tempo, time signature, key signature, playhead (bar/beat), and whether cycle is on. Touches Logic (unlike get_project_overview)."
+    public let inputSchema: Value = .object(["type": .string("object"), "properties": .object([:])])
+    let daemon: Daemon
+    public func invoke(_ args: [String: Value]) async throws -> Value {
+        guard await daemon.ax.arrangeWindow() != nil else {
+            throw ToolFailure(error: "no arrange window — is a project open in Logic?", layer: "ax",
+                              expected: "an AXWindow titled \"… - Tracks\"", observed: "none")
+        }
+        func num(_ desc: String) async -> Double? {
+            guard let h = await daemon.ax.controlBarControl(role: "AXSlider", description: desc) else { return nil }
+            return await daemon.ax.value(of: h)
+        }
+        func popup(_ desc: String) async -> String? {
+            guard let h = await daemon.ax.controlBarControl(role: "AXPopUpButton", description: desc) else { return nil }
+            return await daemon.ax.stringValue(.value, of: h)
+        }
+        let cycling = (await {
+            guard let c = await daemon.ax.controlBarControl(role: "AXCheckBox", description: "Cycle") else { return nil as String? }
+            return await daemon.ax.stringValue(.value, of: c)
+        }()) == "1"
+        var obj: [String: Value] = ["cycling": .bool(cycling)]
+        if let t = await num("Tempo") { obj["tempo"] = .double(t) }
+        if let ts = await popup("Time Signature") { obj["timeSignature"] = .string(ts) }
+        if let ks = await popup("Key Signature") { obj["keySignature"] = .string(ks) }
+        if let b = await num("bar"), let be = await num("beat") {
+            obj["playhead"] = .object(["bar": .int(Int(b.rounded())), "beat": .int(Int(be.rounded()))])
+        }
+        return .object(obj)
+    }
+}
+
 public struct SetKeySignatureTool: LogicTool {
     public let name = "set_key_signature"
     public let description = "Set the project key signature via Logic's control-bar popup (e.g. 'C Major', 'A Minor'), verified against the popup's displayed value."

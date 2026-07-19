@@ -101,6 +101,7 @@ public final class Daemon: Sendable {
         await registry.register(SetPlayheadTool(daemon: self))
         await registry.register(SelectTrackTool(daemon: self))
         await registry.register(SetCycleTool(daemon: self))
+        await registry.register(GetArrangeStateTool(daemon: self))
         await registry.register(UndoStructuralTool(daemon: self))
         await registry.register(UndoLastTool(daemon: self, registry: registry))
     }
