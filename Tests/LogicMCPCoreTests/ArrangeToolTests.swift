@@ -106,5 +106,6 @@ final class ArrangeToolTests: XCTestCase {
         let (json, isErr) = await callJSON(reg, "set_playhead", ["bar": .int(12)])
         XCTAssertFalse(isErr)
         XCTAssertTrue(json.contains("\"bar\":12"), json)
+        XCTAssertTrue(json.contains("\"beat\":1"), json)
     }
 }
