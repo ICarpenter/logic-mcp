@@ -137,6 +137,65 @@ public struct SelectTrackTool: LogicTool {
     }
 }
 
+public struct SetCycleTool: LogicTool {
+    public let name = "set_cycle"
+    public let description = "Enable or disable Logic's cycle (loop) mode, and optionally set its range by bar. 'enabled': turn cycle on/off (verified). 'startBar'/'endBar' (optional, together): set the cycle range; the range is set by moving the playhead to each bar and copying its timeline position to the locator (encoding-free)."
+    public let inputSchema: Value = .object([
+        "type": .string("object"),
+        "properties": .object([
+            "enabled": .object(["type": .string("boolean")]),
+            "startBar": .object(["type": .string("integer")]),
+            "endBar": .object(["type": .string("integer")]),
+        ]),
+    ])
+    let daemon: Daemon
+    public func invoke(_ args: [String: Value]) async throws -> Value {
+        var result: [String: Value] = [:]
+
+        if let enabled = args["enabled"]?.boolValue {
+            let cycle = try await arrangeControl(daemon, role: "AXCheckBox", description: "Cycle", tool: name)
+            let now = (await daemon.ax.stringValue(.value, of: cycle)) == "1"
+            if now != enabled { try await daemon.ax.press(cycle) }
+            let after = (await daemon.ax.stringValue(.value, of: cycle)) == "1"
+            result["enabled"] = .bool(after)
+        }
+
+        if let s = args["startBar"]?.coercedInt, let e = args["endBar"]?.coercedInt {
+            guard s >= 1, e > s else { throw ToolFailure(error: "'startBar' ≥ 1 and 'endBar' > 'startBar' required", layer: "daemon") }
+            guard let thumb = await daemon.ax.playheadThumb(),
+                  let startM = await daemon.ax.cycleMarker("Start Marker"),
+                  let endM = await daemon.ax.cycleMarker("End Marker"),
+                  await daemon.ax.isSettable(startM), await daemon.ax.isSettable(endM) else {
+                throw ToolFailure(error: "cycle range-by-bar is not available on this Logic build", layer: "ax",
+                                  expected: "settable Start/End Marker indicators sharing the playhead-thumb encoding",
+                                  observed: "markers not settable — set the cycle range in Logic, or use 'enabled' only")
+            }
+            // Rosetta stone: move the playhead to a bar, read its encoded timeline position, and write
+            // that raw to the marker — no need to decode Logic's internal tick unit.
+            func rawForBar(_ bar: Int) async throws -> Double {
+                guard let barS = await daemon.ax.controlBarControl(role: "AXSlider", description: "bar") else {
+                    throw ToolFailure(error: "no bar slider", layer: "ax", expected: "playhead bar slider", observed: "none")
+                }
+                _ = try await daemon.ax.nudgeToRaw(barS, target: Double(bar), maxSteps: 1200)
+                return await daemon.ax.value(of: thumb) ?? 0
+            }
+            let rawStart = try await rawForBar(s)
+            let rawEnd = try await rawForBar(e)
+            _ = try await daemon.ax.nudgeToRaw(startM, target: rawStart, maxSteps: 4)
+            _ = try await daemon.ax.nudgeToRaw(endM, target: rawEnd, maxSteps: 4)
+            let gotStart = await daemon.ax.value(of: startM) ?? 0
+            let gotEnd = await daemon.ax.value(of: endM) ?? 0
+            result["startBar"] = .int(s); result["endBar"] = .int(e)
+            result["rangeVerified"] = .bool(abs(gotStart - rawStart) < 1 && abs(gotEnd - rawEnd) < 1)
+        }
+
+        if result.isEmpty {
+            throw ToolFailure(error: "set_cycle needs 'enabled' and/or 'startBar'+'endBar'", layer: "daemon")
+        }
+        return .object(result)
+    }
+}
+
 public struct SetKeySignatureTool: LogicTool {
     public let name = "set_key_signature"
     public let description = "Set the project key signature via Logic's control-bar popup (e.g. 'C Major', 'A Minor'), verified against the popup's displayed value."

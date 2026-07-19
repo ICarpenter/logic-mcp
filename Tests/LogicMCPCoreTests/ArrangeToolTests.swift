@@ -141,4 +141,27 @@ final class ArrangeToolTests: XCTestCase {
         XCTAssertTrue(isErr)
         XCTAssertTrue(json.contains("vox") && json.contains("bass"), json)   // lists available
     }
+
+    private func cycleTree(enabled: Bool) -> FakeAXProvider {
+        // Cycle is a press-only checkbox (settable=false); the fake flips "1"/"0" on press.
+        let cycle = FakeAXNode(role: "AXCheckBox", description: "Cycle", stringValue: enabled ? "1" : "0")
+        let cbInner = FakeAXNode(role: "AXGroup", description: "Control Bar", children: [cycle])
+        let cbOuter = FakeAXNode(role: "AXGroup", description: "Control Bar", children: [cbInner])
+        let arrange = FakeAXNode(role: "AXWindow", title: "p - Tracks", children: [cbOuter])
+        return FakeAXProvider(root: FakeAXNode(role: "AXApplication", children: [arrange]))
+    }
+
+    func testSetCycleEnable() async {
+        let (_, reg) = await makeDaemon(cycleTree(enabled: false))
+        let (json, isErr) = await callJSON(reg, "set_cycle", ["enabled": .bool(true)])
+        XCTAssertFalse(isErr, json)
+        XCTAssertTrue(json.contains("\"enabled\":true"), json)
+    }
+
+    func testSetCycleAlreadyInStateIsNoOp() async {
+        let (_, reg) = await makeDaemon(cycleTree(enabled: true))
+        let (json, isErr) = await callJSON(reg, "set_cycle", ["enabled": .bool(true)])
+        XCTAssertFalse(isErr, json)
+        XCTAssertTrue(json.contains("\"enabled\":true"), json)
+    }
 }

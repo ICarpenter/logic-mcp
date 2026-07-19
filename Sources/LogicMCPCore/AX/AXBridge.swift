@@ -520,6 +520,17 @@ public actor AXBridge {
         else { return nil }
         return String(desc[desc.index(after: open)..<close])
     }
+
+    /// The ruler's `Playhead thumb` timeline indicator (encoded value; used as a bar→raw oracle).
+    public func playheadThumb() -> AXHandle? {
+        guard let w = arrangeWindow() else { return nil }
+        return descendant(of: w, role: "AXValueIndicator", description: "Playhead thumb")
+    }
+    /// A cycle locator indicator: `which` is "Start Marker" or "End Marker".
+    public func cycleMarker(_ which: String) -> AXHandle? {
+        guard let w = arrangeWindow() else { return nil }
+        return descendant(of: w, role: "AXValueIndicator", description: which)
+    }
 }
 
 private extension Array {
