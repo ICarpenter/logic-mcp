@@ -91,10 +91,13 @@ struct AXDump: AsyncParsableCommand {
             if descNeedle.hasPrefix("=") { exact = true; descNeedle.removeFirst() }
             let maxD = (args.count >= 4 ? Int(args[3]) : nil) ?? 18
             let roleFilter = (args.count >= 5 ? args[4] : nil)   // e.g. "AXRadioButton" to disambiguate
+            let occurrence = (args.count >= 6 ? Int(args[5]) : nil) ?? 0   // 0-based: which match to press
             let wins = p.windows().filter { (p.string(.title, of: $0) ?? "").lowercased().contains(needle) }
-            guard let target = wins.compactMap({ firstByDescription(p, in: $0, contains: descNeedle, role: roleFilter, exact: exact) }).first else {
-                print("no element with description containing '\(descNeedle)' in window '\(needle)'"); return
+            let matches = wins.flatMap { allByDescription(p, in: $0, contains: descNeedle, role: roleFilter, exact: exact) }
+            guard occurrence < matches.count else {
+                print("only \(matches.count) match(es) for '\(descNeedle)' (role \(roleFilter ?? "any")); wanted index \(occurrence)"); return
             }
+            let target = matches[occurrence]
             print("pressing: \(p.string(.role, of: target) ?? "?") desc=\(p.string(.description, of: target).debugDescription) value=\(p.string(.value, of: target).debugDescription)")
             try? p.perform(.press, on: target)
             usleep(900_000)
@@ -172,6 +175,20 @@ struct AXDump: AsyncParsableCommand {
         let ni = kids.index(after: gi)
         guard ni < kids.endIndex, p.string(.role, of: kids[ni]) == "AXButton" else { return nil }
         return kids[ni]
+    }
+
+    /// Collect ALL elements matching the description (+ optional role/exact), in tree order — so a
+    /// probe can press the Nth occurrence (e.g. the 2nd "Has Focus" radio = the 2nd track).
+    private func allByDescription(_ p: SystemAXProvider, in root: AXHandle, contains: String, role: String? = nil, exact: Bool = false) -> [AXHandle] {
+        var out: [AXHandle] = []
+        func rec(_ h: AXHandle, _ d: Int) {
+            if d > 16 { return }
+            if let desc = p.string(.description, of: h)?.lowercased(), (exact ? desc == contains : desc.contains(contains)),
+               role == nil || p.string(.role, of: h) == role { out.append(h) }
+            for c in p.children(of: h) { rec(c, d + 1) }
+        }
+        rec(root, 0)
+        return out
     }
 
     private func firstByDescription(_ p: SystemAXProvider, in root: AXHandle, contains: String, role: String? = nil, exact: Bool = false) -> AXHandle? {

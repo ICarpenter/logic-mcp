@@ -1,0 +1,1237 @@
+AXWindow subrole="AXStandardWindow" title="mcp_test.logicx - Mixer: Tracks" settable=false
+  AXButton subrole="AXCloseButton" settable=false
+  AXButton subrole="AXFullScreenButton" settable=false
+    AXGroup settable=false
+      AXGroup settable=false
+  AXButton subrole="AXMinimizeButton" settable=false
+  AXImage title="mcp_test.logicx" settable=false
+  AXStaticText value="mcp_test.logicx - Mixer: Tracks" settable=false
+  AXGroup description="Mixer" settable=false
+    AXGroup description="Mixer" settable=false
+      AXButton description="Leave Folder" settable=false
+      AXGroup settable=false
+        AXMenuButton subrole="AXSegment" description="Edit" settable=false
+        AXMenuButton subrole="AXSegment" description="Options" settable=false
+        AXMenuButton subrole="AXSegment" description="View" settable=false
+      AXStaticText value="Sends on Faders:" settable=false
+      AXCheckBox title="Sends on Faders:" value="0" settable=false
+      AXPopUpButton value="Off" settable=false
+      AXRadioGroup settable=false
+        AXRadioButton subrole="AXSegment" description="Single" value="0" settable=false
+        AXRadioButton subrole="AXSegment" description="Tracks" value="1" settable=false
+        AXRadioButton subrole="AXSegment" description="All" value="0" settable=false
+      AXMenuButton settable=false
+      AXRadioGroup settable=false
+        AXRadioButton subrole="AXSegment" description="Narrow Channel Strips" value="1" settable=false
+        AXRadioButton subrole="AXSegment" description="Wide Channel Strips" value="0" settable=false
+    AXLayoutArea description="Mixer" settable=false
+      AXLayoutItem description="vox" settable=false
+        AXTextField description="name" value="vox" settable=false
+        AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+        AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+        AXSlider description="volume fader" value="173" settable=true
+          AXValueIndicator description="fader knob" settable=false
+        AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+        AXButton description="peak level meter" title="peak level meter, -15.1 dB" value="signal clipping off" settable=false
+        AXSlider description="pan" value="0" settable=true
+          AXStaticText description="knob readout" settable=false
+        AXGroup description="Read, automation enabled" settable=false
+          AXCheckBox description="automation" value="1" settable=false
+          AXButton description="list" settable=false
+        AXPopUpButton description="group" title="group" settable=false
+        AXButton description="Bus 9" settable=false
+        AXButton description="send button" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton description="insert bar" settable=false
+        AXGroup description="Channel EQ" settable=false
+          AXCheckBox description="bypass" value="0" settable=false
+          AXButton description="open" settable=false
+          AXButton description="list" settable=false
+        AXGroup description="RetroSyn" settable=false
+          AXCheckBox description="bypass" value="0" settable=false
+          AXButton description="open" settable=false
+          AXButton description="list" settable=false
+        AXButton description="MIDI plug-in" settable=false
+        AXButton description="EQ" value="on" settable=false
+        AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+        AXButton description="setting" settable=false
+      AXLayoutItem description="Rugrats" settable=false
+        AXTextField description="name" value="Rugrats" settable=false
+        AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+        AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+        AXButton subrole="AXSwitch" description="record" value="off" settable=false
+        AXButton subrole="AXSwitch" description="monitoring" value="off" settable=false
+        AXSlider description="volume fader" value="173" settable=true
+          AXValueIndicator description="fader knob" settable=false
+        AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+        AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+        AXSlider description="pan" value="0" settable=true
+          AXStaticText description="knob readout" settable=false
+        AXGroup description="Read, automation enabled" settable=false
+          AXCheckBox description="automation" value="1" settable=false
+          AXButton description="list" settable=false
+        AXPopUpButton description="group" title="group" settable=false
+        AXButton description="Stereo Output" settable=false
+        AXButton description="send button" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton subrole="AXSwitch" description="channel mode" value="Stereo" settable=false
+        AXButton description="Input 13-14" settable=false
+        AXButton description="EQ" value="off" settable=false
+        AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+        AXButton description="setting" settable=false
+      AXLayoutItem description="Backup Vox" settable=false
+        AXTextField description="name" value="Backup Vox" settable=false
+        AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+        AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+        AXSlider description="volume fader" value="173" settable=true
+          AXValueIndicator description="fader knob" settable=false
+        AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+        AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+        AXSlider description="pan" value="0" settable=true
+          AXStaticText description="knob readout" settable=false
+        AXGroup description="Read, automation enabled" settable=false
+          AXCheckBox description="automation" value="1" settable=false
+          AXButton description="list" settable=false
+        AXPopUpButton description="group" title="group" settable=false
+        AXButton description="Bus 9" settable=false
+        AXButton description="send button" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXGroup description="Retro Synth" settable=false
+          AXCheckBox description="bypass" value="0" settable=false
+          AXButton description="open" settable=false
+          AXButton description="list" settable=false
+        AXButton description="MIDI plug-in" settable=false
+        AXButton description="EQ" value="off" settable=false
+        AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+        AXButton description="setting" settable=false
+      AXLayoutItem description="guitar" settable=false
+        AXTextField description="name" value="guitar" settable=false
+        AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+        AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+        AXSlider description="volume fader" value="173" settable=true
+          AXValueIndicator description="fader knob" settable=false
+        AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+        AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+        AXSlider description="pan" value="0" settable=true
+          AXStaticText description="knob readout" settable=false
+        AXGroup description="Read, automation enabled" settable=false
+          AXCheckBox description="automation" value="1" settable=false
+          AXButton description="list" settable=false
+        AXPopUpButton description="group" title="group" settable=false
+        AXButton description="Bus 9" settable=false
+        AXButton description="send button" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXGroup description="Retro Synth" settable=false
+          AXCheckBox description="bypass" value="0" settable=false
+          AXButton description="open" settable=false
+          AXButton description="list" settable=false
+        AXButton description="MIDI plug-in" settable=false
+        AXButton description="EQ" value="off" settable=false
+        AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+        AXButton description="setting" settable=false
+      AXLayoutItem description="bass" settable=false
+        AXTextField description="name" value="bass" settable=false
+        AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+        AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+        AXSlider description="volume fader" value="173" settable=true
+          AXValueIndicator description="fader knob" settable=false
+        AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+        AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+        AXSlider description="pan" value="0" settable=true
+          AXStaticText description="knob readout" settable=false
+        AXGroup description="Read, automation enabled" settable=false
+          AXCheckBox description="automation" value="1" settable=false
+          AXButton description="list" settable=false
+        AXPopUpButton description="group" title="group" settable=false
+        AXButton description="Bus 9" settable=false
+        AXButton description="send button" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXGroup description="Retro Synth" settable=false
+          AXCheckBox description="bypass" value="0" settable=false
+          AXButton description="open" settable=false
+          AXButton description="list" settable=false
+        AXButton description="MIDI plug-in" settable=false
+        AXButton description="EQ" value="off" settable=false
+        AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+        AXButton description="setting" settable=false
+      AXLayoutItem description="synth" settable=false
+        AXTextField description="name" value="synth" settable=false
+        AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+        AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+        AXSlider description="volume fader" value="173" settable=true
+          AXValueIndicator description="fader knob" settable=false
+        AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+        AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+        AXSlider description="pan" value="0" settable=true
+          AXStaticText description="knob readout" settable=false
+        AXGroup description="Read, automation enabled" settable=false
+          AXCheckBox description="automation" value="1" settable=false
+          AXButton description="list" settable=false
+        AXPopUpButton description="group" title="group" settable=false
+        AXButton description="Bus 9" settable=false
+        AXButton description="send button" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXGroup description="RetroSyn" settable=false
+          AXCheckBox description="bypass" value="0" settable=false
+          AXButton description="open" settable=false
+          AXButton description="list" settable=false
+        AXButton description="MIDI plug-in" settable=false
+        AXButton description="EQ" value="off" settable=false
+        AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+        AXButton description="setting" settable=false
+      AXLayoutItem description="lead guitar" settable=false
+        AXTextField description="name" value="lead guitar" settable=false
+        AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+        AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+        AXSlider description="volume fader" value="173" settable=true
+          AXValueIndicator description="fader knob" settable=false
+        AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+        AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+        AXSlider description="pan" value="0" settable=true
+          AXStaticText description="knob readout" settable=false
+        AXGroup description="Read, automation enabled" settable=false
+          AXCheckBox description="automation" value="1" settable=false
+          AXButton description="list" settable=false
+        AXPopUpButton description="group" title="group" settable=false
+        AXButton description="Bus 9" settable=false
+        AXButton description="send button" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXGroup description="Retro Synth" settable=false
+          AXCheckBox description="bypass" value="0" settable=false
+          AXButton description="open" settable=false
+          AXButton description="list" settable=false
+        AXButton description="MIDI plug-in" settable=false
+        AXButton description="EQ" value="off" settable=false
+        AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+        AXButton description="setting" settable=false
+      AXLayoutItem description="piano" settable=false
+        AXTextField description="name" value="piano" settable=false
+        AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+        AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+        AXSlider description="volume fader" value="173" settable=true
+          AXValueIndicator description="fader knob" settable=false
+        AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+        AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+        AXSlider description="pan" value="0" settable=true
+          AXStaticText description="knob readout" settable=false
+        AXGroup description="Read, automation enabled" settable=false
+          AXCheckBox description="automation" value="1" settable=false
+          AXButton description="list" settable=false
+        AXPopUpButton description="group" title="group" settable=false
+        AXButton description="Bus 9" settable=false
+        AXButton description="send button" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXGroup description="Retro Synth" settable=false
+          AXCheckBox description="bypass" value="0" settable=false
+          AXButton description="open" settable=false
+          AXButton description="list" settable=false
+        AXButton description="MIDI plug-in" settable=false
+        AXButton description="EQ" value="off" settable=false
+        AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+        AXButton description="setting" settable=false
+      AXLayoutItem description="Kick Drum" settable=false
+        AXTextField description="name" value="Kick Drum" settable=false
+        AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+        AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+        AXSlider description="volume fader" value="173" settable=true
+          AXValueIndicator description="fader knob" settable=false
+        AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+        AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+        AXSlider description="pan" value="0" settable=true
+          AXStaticText description="knob readout" settable=false
+        AXGroup description="Read, automation enabled" settable=false
+          AXCheckBox description="automation" value="1" settable=false
+          AXButton description="list" settable=false
+        AXPopUpButton description="group" title="group" settable=false
+        AXButton description="Bus 9" settable=false
+        AXButton description="send button" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXGroup description="Retro Synth" settable=false
+          AXCheckBox description="bypass" value="0" settable=false
+          AXButton description="open" settable=false
+          AXButton description="list" settable=false
+        AXButton description="MIDI plug-in" settable=false
+        AXButton description="EQ" value="off" settable=false
+        AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+        AXButton description="setting" settable=false
+      AXLayoutItem description="Snare Drum" settable=false
+        AXTextField description="name" value="Snare Drum" settable=false
+        AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+        AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+        AXSlider description="volume fader" value="173" settable=true
+          AXValueIndicator description="fader knob" settable=false
+        AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+        AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+        AXSlider description="pan" value="0" settable=true
+          AXStaticText description="knob readout" settable=false
+        AXGroup description="Read, automation enabled" settable=false
+          AXCheckBox description="automation" value="1" settable=false
+          AXButton description="list" settable=false
+        AXPopUpButton description="group" title="group" settable=false
+        AXButton description="Bus 9" settable=false
+        AXButton description="send button" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXGroup description="RetroSyn" settable=false
+          AXCheckBox description="bypass" value="0" settable=false
+          AXButton description="open" settable=false
+          AXButton description="list" settable=false
+        AXButton description="MIDI plug-in" settable=false
+        AXButton description="EQ" value="off" settable=false
+        AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+        AXButton description="setting" settable=false
+      AXLayoutItem description="High Hats" settable=false
+        AXTextField description="name" value="High Hats" settable=false
+        AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+        AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+        AXSlider description="volume fader" value="173" settable=true
+          AXValueIndicator description="fader knob" settable=false
+        AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+        AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+        AXSlider description="pan" value="0" settable=true
+          AXStaticText description="knob readout" settable=false
+        AXGroup description="Read, automation enabled" settable=false
+          AXCheckBox description="automation" value="1" settable=false
+          AXButton description="list" settable=false
+        AXPopUpButton description="group" title="group" settable=false
+        AXButton description="Bus 9" settable=false
+        AXButton description="send button" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXGroup description="Retro Synth" settable=false
+          AXCheckBox description="bypass" value="0" settable=false
+          AXButton description="open" settable=false
+          AXButton description="list" settable=false
+        AXButton description="MIDI plug-in" settable=false
+        AXButton description="EQ" value="off" settable=false
+        AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+        AXButton description="setting" settable=false
+      AXLayoutItem description="OverHeads" settable=false
+        AXTextField description="name" value="OverHeads" settable=false
+        AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+        AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+        AXSlider description="volume fader" value="173" settable=true
+          AXValueIndicator description="fader knob" settable=false
+        AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+        AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+        AXSlider description="pan" value="0" settable=true
+          AXStaticText description="knob readout" settable=false
+        AXGroup description="Read, automation enabled" settable=false
+          AXCheckBox description="automation" value="1" settable=false
+          AXButton description="list" settable=false
+        AXPopUpButton description="group" title="group" settable=false
+        AXButton description="Bus 9" settable=false
+        AXButton description="send button" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXGroup description="Retro Synth" settable=false
+          AXCheckBox description="bypass" value="0" settable=false
+          AXButton description="open" settable=false
+          AXButton description="list" settable=false
+        AXButton description="MIDI plug-in" settable=false
+        AXButton description="EQ" value="off" settable=false
+        AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+        AXButton description="setting" settable=false
+      AXLayoutItem description="Room" settable=false
+        AXTextField description="name" value="Room" settable=false
+        AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+        AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+        AXSlider description="volume fader" value="173" settable=true
+          AXValueIndicator description="fader knob" settable=false
+        AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+        AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+        AXSlider description="pan" value="0" settable=true
+          AXStaticText description="knob readout" settable=false
+        AXGroup description="Read, automation enabled" settable=false
+          AXCheckBox description="automation" value="1" settable=false
+          AXButton description="list" settable=false
+        AXPopUpButton description="group" title="group" settable=false
+        AXButton description="Bus 9" settable=false
+        AXButton description="send button" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXGroup description="Retro Synth" settable=false
+          AXCheckBox description="bypass" value="0" settable=false
+          AXButton description="open" settable=false
+          AXButton description="list" settable=false
+        AXButton description="MIDI plug-in" settable=false
+        AXButton description="EQ" value="off" settable=false
+        AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+        AXButton description="setting" settable=false
+      AXLayoutItem description="pedal steel1" settable=false
+        AXTextField description="name" value="pedal steel1" settable=false
+        AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+        AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+        AXSlider description="volume fader" value="173" settable=true
+          AXValueIndicator description="fader knob" settable=false
+        AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+        AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+        AXSlider description="pan" value="0" settable=true
+          AXStaticText description="knob readout" settable=false
+        AXGroup description="Read, automation enabled" settable=false
+          AXCheckBox description="automation" value="1" settable=false
+          AXButton description="list" settable=false
+        AXPopUpButton description="group" title="group" settable=false
+        AXButton description="Bus 9" settable=false
+        AXButton description="send button" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXGroup description="Retro Synth" settable=false
+          AXCheckBox description="bypass" value="0" settable=false
+          AXButton description="open" settable=false
+          AXButton description="list" settable=false
+        AXButton description="MIDI plug-in" settable=false
+        AXButton description="EQ" value="off" settable=false
+        AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+        AXButton description="setting" settable=false
+      AXLayoutItem description="pedla steel2" settable=false
+        AXTextField description="name" value="pedla steel2" settable=false
+        AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+        AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+        AXSlider description="volume fader" value="173" settable=true
+          AXValueIndicator description="fader knob" settable=false
+        AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+        AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+        AXSlider description="pan" value="0" settable=true
+          AXStaticText description="knob readout" settable=false
+        AXGroup description="Read, automation enabled" settable=false
+          AXCheckBox description="automation" value="1" settable=false
+          AXButton description="list" settable=false
+        AXPopUpButton description="group" title="group" settable=false
+        AXButton description="Bus 9" settable=false
+        AXButton description="send button" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXGroup description="Retro Synth" settable=false
+          AXCheckBox description="bypass" value="0" settable=false
+          AXButton description="open" settable=false
+          AXButton description="list" settable=false
+        AXButton description="MIDI plug-in" settable=false
+        AXButton description="EQ" value="off" settable=false
+        AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+        AXButton description="setting" settable=false
+      AXLayoutItem description="pedla steel3" settable=false
+        AXTextField description="name" value="pedla steel3" settable=false
+        AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+        AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+        AXButton subrole="AXSwitch" description="add aux" value="off" settable=false
+        AXButton subrole="AXSwitch" description="remove aux" value="off" settable=false
+        AXSlider description="volume fader" value="173" settable=true
+          AXValueIndicator description="fader knob" settable=false
+        AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+        AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+        AXSlider description="pan" value="0" settable=true
+          AXStaticText description="knob readout" settable=false
+        AXGroup description="Read, automation enabled" settable=false
+          AXCheckBox description="automation" value="1" settable=false
+          AXButton description="list" settable=false
+        AXPopUpButton description="group" title="group" settable=false
+        AXButton description="Bus 9" settable=false
+        AXButton description="send button" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXGroup description="Retro Synth" settable=false
+          AXCheckBox description="bypass" value="0" settable=false
+          AXButton description="open" settable=false
+          AXButton description="list" settable=false
+        AXButton description="MIDI plug-in" settable=false
+        AXButton description="EQ" value="off" settable=false
+        AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+        AXButton description="setting" settable=false
+      AXLayoutItem description="152 17 4" settable=false
+        AXTextField description="name" value="pedla steel 4" settable=false
+        AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+        AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+        AXButton subrole="AXSwitch" description="add aux" value="off" settable=false
+        AXButton subrole="AXSwitch" description="remove aux" value="off" settable=false
+        AXSlider description="volume fader" value="173" settable=true
+          AXValueIndicator description="fader knob" settable=false
+        AXTextField description="volume fader level" title="volume fader level" settable=false
+        AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+        AXSlider description="pan" value="0" settable=true
+          AXStaticText description="knob readout" settable=false
+        AXButton description="automation" settable=false
+        AXPopUpButton description="group" title="group" settable=false
+        AXButton description="output" settable=false
+        AXButton description="send button" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXGroup description="input" settable=false
+          AXCheckBox description="bypass" value="1" settable=false
+          AXButton description="open" settable=false
+          AXButton description="list" settable=false
+        AXButton description="MIDI plug-in" settable=false
+        AXButton description="EQ" value="off" settable=false
+        AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+        AXButton description="setting" settable=false
+      AXLayoutItem description="156 18 4" settable=false
+        AXTextField description="name" value="pedla steel 5" settable=false
+        AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+        AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+        AXButton subrole="AXSwitch" description="add aux" value="off" settable=false
+        AXButton subrole="AXSwitch" description="remove aux" value="off" settable=false
+        AXSlider description="volume fader" value="173" settable=true
+          AXValueIndicator description="fader knob" settable=false
+        AXTextField description="volume fader level" title="volume fader level" settable=false
+        AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+        AXSlider description="pan" value="30" settable=true
+          AXStaticText description="knob readout" value="+30" settable=false
+        AXButton description="automation" settable=false
+        AXPopUpButton description="group" title="group" settable=false
+        AXButton description="output" settable=false
+        AXButton description="send button" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXGroup description="input" settable=false
+          AXCheckBox description="bypass" value="1" settable=false
+          AXButton description="open" settable=false
+          AXButton description="list" settable=false
+        AXButton description="MIDI plug-in" settable=false
+        AXButton description="EQ" value="off" settable=false
+        AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+        AXButton description="setting" settable=false
+      AXLayoutItem description="92 21 8" settable=false
+        AXTextField description="name" value="Aux 1" settable=false
+        AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+        AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+        AXSlider description="volume fader" value="173" settable=true
+          AXValueIndicator description="fader knob" settable=false
+        AXTextField description="volume fader level" title="volume fader level" settable=false
+        AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+        AXSlider description="pan" value="0" settable=true
+          AXStaticText description="knob readout" settable=false
+        AXButton description="automation" settable=false
+        AXPopUpButton description="group" title="group" settable=false
+        AXButton description="output" settable=false
+        AXButton description="send button" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton subrole="AXSwitch" description="channel mode" value="Stereo" settable=false
+        AXButton description="input" settable=false
+        AXButton description="EQ" value="off" settable=false
+        AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+        AXButton description="setting" settable=false
+      AXLayoutItem description="80 19 4" settable=false
+        AXTextField description="name" value="Stereo Out" settable=false
+        AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+        AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+        AXButton subrole="AXSwitch" description="bounce" value="off" settable=false
+        AXSlider description="volume fader" value="173" settable=true
+          AXValueIndicator description="fader knob" settable=false
+        AXTextField description="volume fader level" title="volume fader level" settable=false
+        AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+        AXSlider description="pan" value="0" settable=true
+          AXStaticText description="knob readout" settable=false
+        AXButton description="automation" settable=false
+        AXPopUpButton description="group" title="group" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton description="audio plug-in" settable=false
+        AXButton subrole="AXSwitch" description="channel mode" value="Stereo" settable=false
+        AXButton description="mastering assistant" settable=false
+        AXButton description="EQ" value="off" settable=false
+        AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+        AXButton description="setting" settable=false
+      AXLayoutItem description="84 23 8" settable=false
+        AXTextField description="name" value="Master" settable=false
+        AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+        AXButton subrole="AXSwitch" description="dim" value="off" settable=false
+        AXSlider description="volume fader" value="173" settable=true
+          AXValueIndicator description="fader knob" settable=false
+        AXTextField description="volume fader level" title="volume fader level" settable=false
+        AXButton description="automation" settable=false
+        AXPopUpButton description="group" title="group" settable=false
+AXWindow subrole="AXStandardWindow" title="mcp_test.logicx - Tracks" settable=false
+  AXButton subrole="AXCloseButton" settable=false
+  AXButton subrole="AXFullScreenButton" settable=false
+    AXGroup settable=false
+      AXGroup settable=false
+  AXButton subrole="AXMinimizeButton" settable=false
+  AXImage title="mcp_test.logicx" settable=false
+  AXStaticText value="mcp_test.logicx - Tracks" settable=false
+  AXGroup description="Control Bar" settable=false
+    AXGroup description="Control Bar" settable=false
+      AXPopUpButton description="Display Mode" title="Beats & Project" value="Beats & Project" settable=false
+      AXGroup description="Playhead Position" settable=false
+        AXSlider description="bar" value="1" settable=true
+        AXSlider description="beat" value="1" settable=true
+      AXSlider description="Tempo" value="120" settable=true
+      AXPopUpButton settable=false
+      AXPopUpButton description="Time Signature" value="4/4" settable=false
+      AXPopUpButton description="Key Signature" value="C Major" settable=false
+    AXCheckBox description="Cycle" title="Cycle" value="1" settable=false
+    AXCheckBox description="Free Tempo Recording" title="Free Tempo Recording" value="0" settable=false
+    AXCheckBox description="Record" title="Record" value="0" settable=false
+    AXCheckBox description="Play" title="Play" value="0" settable=false
+    AXButton description="Stop" title="Stop" value="0" settable=false
+    AXButton description="Forward" title="Forward" value="0" settable=false
+    AXButton description="Rewind" title="Rewind" value="0" settable=false
+    AXCheckBox description="Replace" title="Replace" value="0" settable=false
+    AXCheckBox description="Autopunch" title="Autopunch" value="0" settable=false
+    AXButton description="Set Punch In Locator" title="Set Punch In Locator" value="0" settable=false
+    AXButton description="Set Punch Out Locator" title="Set Punch Out Locator" value="0" settable=false
+    AXCheckBox description="Software Monitoring" title="Software Monitoring" value="1" settable=false
+    AXCheckBox description="Low Latency Monitoring Mode" title="Low Latency Monitoring Mode" value="0" settable=false
+    AXCheckBox description="Tuner" title="Tuner" value="0" settable=false
+    AXCheckBox description="Solo" title="Solo" value="0" settable=false
+    AXCheckBox description="Count In" title="Count In" value="1" settable=false
+    AXCheckBox description="Metronome Click" title="Metronome Click" value="0" settable=false
+    AXCheckBox description="Library" title="Library" value="1" settable=false
+    AXCheckBox description="Inspector" title="Inspector" value="1" settable=false
+    AXCheckBox description="Quick Help" title="Quick Help" value="1" settable=false
+    AXCheckBox description="Toolbar" title="Toolbar" value="0" settable=false
+    AXCheckBox description="Smart Controls" title="Smart Controls" value="0" settable=false
+    AXCheckBox description="Mixer" title="Mixer" value="0" settable=false
+    AXCheckBox description="Editors" title="Editors" value="1" settable=false
+    AXCheckBox description="List Editors" title="List Editors" value="1" settable=false
+    AXCheckBox description="Note Pads" title="Note Pads" value="0" settable=false
+    AXCheckBox description="Loop Browser" title="Loop Browser" value="0" settable=false
+    AXCheckBox description="Browsers" title="Browsers" value="0" settable=false
+    AXSlider description="Master Volume" value="0.7086614370346069" settable=true
+      AXValueIndicator value="0.7086614370346069" settable=false
+  AXGroup description="Inspector" settable=false
+    AXList settable=false
+      AXGroup settable=false
+        AXTextArea value="Welcome to Quick Help\rMove the pointer over an i" settable=false
+        AXButton settable=false
+        AXDisclosureTriangle value="1" settable=false
+        AXStaticText value="Quick Help" settable=false
+      AXGroup settable=false
+        AXScrollArea settable=false
+          AXOutline settable=false
+            AXRow subrole="AXOutlineRow" settable=false
+              AXTextField value="Mute:" settable=false
+              AXCheckBox value="0" settable=false
+            AXRow subrole="AXOutlineRow" settable=false
+              AXTextField value="Loop:" settable=false
+              AXCheckBox value="0" settable=false
+            AXRow subrole="AXOutlineRow" settable=false
+              AXTextField value="Quantize:" settable=false
+              AXPopUpButton value="Off" settable=false
+            AXRow subrole="AXOutlineRow" settable=false
+              AXTextField value="Q-Swing:" settable=false
+              AXSlider value="50" settable=false
+            AXRow subrole="AXOutlineRow" settable=false
+              AXTextField value="Transpose:" settable=false
+              AXSlider value="0" settable=false
+            AXRow subrole="AXOutlineRow" settable=false
+              AXTextField value="Fine Tune:" settable=false
+              AXSlider value="0" settable=false
+            AXRow subrole="AXOutlineRow" settable=false
+              AXTextField value="Pitch Source:" settable=false
+              AXPopUpButton value="Off" settable=false
+            AXRow subrole="AXOutlineRow" settable=false
+              AXTextField value="Flex:" settable=false
+              AXCheckBox value="0" settable=false
+            AXRow subrole="AXOutlineRow" settable=false
+              AXTextField value="Smart Tempo:" settable=false
+              AXPopUpButton value="On" settable=false
+            AXRow subrole="AXOutlineRow" settable=false
+              AXTextField value="-" settable=false
+              AXTextField value="-" settable=false
+            AXRow subrole="AXOutlineRow" settable=false
+              AXTextField value="Gain:" settable=false
+              AXSlider value="0" settable=true
+            AXRow subrole="AXOutlineRow" settable=false
+              AXGroup settable=false
+                AXDisclosureTriangle value="0" settable=false
+                AXTextField value=" More" settable=false
+              AXTextField value=" More" settable=false
+            AXColumn settable=false
+            AXColumn settable=false
+        AXDisclosureTriangle value="1" settable=false
+        AXStaticText value="Audio Defaults" settable=false
+        AXStaticText value="Region:" settable=false
+      AXGroup settable=false
+        AXDisclosureTriangle value="0" settable=false
+        AXStaticText value="Track:" settable=false
+        AXTextField value="Rugrats" settable=true
+      AXGroup settable=false
+        AXLayoutArea description="Mixer" settable=false
+          AXLayoutItem description="Rugrats" settable=false
+            AXTextField description="name" value="Rugrats" settable=false
+            AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+            AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+            AXButton subrole="AXSwitch" description="record" value="off" settable=false
+            AXButton subrole="AXSwitch" description="monitoring" value="off" settable=false
+            AXSlider description="volume fader" value="173" settable=true
+              AXValueIndicator description="fader knob" settable=false
+            AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+            AXButton description="peak level meter" title="peak level meter" value="signal clipping off" settable=false
+            AXSlider description="pan" value="0" settable=true
+              AXStaticText description="knob readout" settable=false
+            AXGroup description="Read, automation enabled" settable=false
+              AXCheckBox description="automation" value="1" settable=false
+              AXButton description="list" settable=false
+            AXPopUpButton description="group" title="group, Group" settable=false
+            AXButton description="Stereo Output" settable=false
+            AXButton description="send button" settable=false
+            AXButton description="audio plug-in" settable=false
+            AXButton subrole="AXSwitch" description="channel mode" value="Stereo" settable=false
+            AXButton description="Input 13-14" settable=false
+            AXButton description="EQ" value="off" settable=false
+            AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+            AXButton description="setting" settable=false
+            AXButton description="library indicator, (null)" value="on" settable=false
+          AXLayoutItem description="Stereo Out" settable=false
+            AXTextField description="name" value="Stereo Out" settable=false
+            AXButton subrole="AXSwitch" description="mute" value="off" settable=false
+            AXButton subrole="AXSwitch" description="solo" value="off" settable=false
+            AXButton subrole="AXSwitch" description="bounce" value="off" settable=false
+            AXSlider description="volume fader" value="173" settable=true
+              AXValueIndicator description="fader knob" settable=false
+            AXTextField description="volume fader level" title="volume fader level, 0.0 dB" settable=false
+            AXButton description="peak level meter" title="peak level meter, -15.1 dB" value="signal clipping off" settable=false
+            AXSlider description="pan" value="0" settable=true
+              AXStaticText description="knob readout" settable=false
+            AXGroup description="Read, automation enabled" settable=false
+              AXCheckBox description="automation" value="1" settable=false
+              AXButton description="list" settable=false
+            AXPopUpButton description="group" title="group, Group" settable=false
+            AXButton description="audio plug-in" settable=false
+            AXButton subrole="AXSwitch" description="channel mode" value="Stereo" settable=false
+            AXButton description="mastering assistant" settable=false
+            AXButton description="EQ" value="off" settable=false
+            AXButton subrole="AXSwitch" description="gain reduction meter" value="off" settable=false
+            AXButton description="setting" settable=false
+            AXButton description="library indicator, (null)" value="off" settable=false
+  AXGroup description="Library" settable=false
+    AXGroup description="Library" settable=false
+      AXGroup settable=false
+        AXGroup settable=false
+          AXStaticText value="Library" settable=false
+        AXSplitGroup settable=false
+          AXGroup settable=false
+          AXSplitter value="107" settable=true
+          AXGroup settable=false
+            AXTextField subrole="AXSearchField" settable=true
+              AXButton settable=false
+          AXGroup settable=false
+            AXBrowser description="Library" settable=false
+              AXScrollArea settable=false
+                AXScrollArea settable=false
+                AXScrollBar value="0" settable=true
+          AXGroup settable=false
+        AXGroup settable=false
+          AXGroup settable=false
+          AXGroup subrole="AXHostingView" settable=false
+            AXGroup settable=false
+              AXButton description="Get More Sounds" settable=false
+              AXUnknown description="5 available sound packs" settable=false
+        AXGroup settable=false
+          AXPopUpButton description="tools" settable=false
+          AXButton title="Revert" settable=false
+          AXButton title="Save…" settable=false
+  AXGroup description="Tracks" settable=false
+    AXGroup description="Tracks" settable=false
+      AXButton description="Leave Folder" settable=false
+      AXGroup settable=false
+        AXMenuButton subrole="AXSegment" description="Edit" settable=false
+        AXMenuButton subrole="AXSegment" description="Functions" settable=false
+        AXMenuButton subrole="AXSegment" description="View" settable=false
+      AXGroup settable=false
+        AXCheckBox subrole="AXSegment" description="Show/Hide Live Loops Grid" value="0" settable=false
+        AXCheckBox subrole="AXSegment" description="Show/Hide Tracks area" value="1" settable=false
+      AXGroup settable=false
+        AXCheckBox subrole="AXSegment" description="Show/Hide Automation" value="1" settable=false
+        AXCheckBox subrole="AXSegment" description="Show/Hide Flex" value="0" settable=false
+      AXCheckBox description="Catch Playhead" value="0" settable=false
+      AXGroup settable=false
+        AXMenuButton subrole="AXSegment" description="Left Click Tool, Pointer Tool" settable=false
+        AXMenuButton subrole="AXSegment" description="Command-Click Tool, Marquee Tool" settable=false
+      AXStaticText value="Snap:" settable=false
+      AXPopUpButton value="Smart" settable=false
+      AXStaticText value="Drag:" settable=false
+      AXPopUpButton description="Drag Mode" value="No Overlap" settable=false
+      AXCheckBox description="Waveform Zoom" title="Waveform Zoom" value="0" settable=false
+      AXGroup settable=false
+        AXCheckBox subrole="AXSegment" description="Vertical Auto Zoom" value="0" settable=false
+        AXCheckBox subrole="AXSegment" description="Horizontal Auto Zoom" value="0" settable=false
+      AXSlider description="Vertical Zoom" value="0.5394467115402222" settable=true
+        AXValueIndicator value="0.5394467115402222" settable=true
+      AXSlider description="Horizontal Zoom" value="0.1943433284759521" settable=true
+        AXValueIndicator value="0.1943433284759521" settable=true
+    AXGroup description="Tracks" settable=false
+      AXSplitGroup settable=false
+        AXSplitGroup settable=false
+          AXGroup description="Tracks legend" settable=false
+            AXButton value="0" settable=false
+            AXPopUpButton description="Chord" value="0" settable=false
+            AXButton description="Create Chord" value="0" settable=false
+            AXPopUpButton description="Signature" value="0" settable=false
+            AXButton description="Create Signature" value="0" settable=false
+            AXPopUpButton description="Tempo" value="0" settable=false
+            AXPopUpButton description="Marker" value="0" settable=false
+            AXButton description="Create Marker without rounding   ⌃⌥\'" value="0" settable=false
+            AXPopUpButton description="Arrangement" value="0" settable=false
+            AXButton description="Create Arrangement Marker" value="0" settable=false
+            AXButton value="0" settable=false
+            AXButton description="Add Tracks   ⌥⌘N" value="0" settable=false
+            AXButton description="New Track with Duplicate Settings   ⌘D" value="0" settable=false
+            AXCheckBox description="Show/Hide Global Tracks   G" value="1" settable=false
+          AXScrollArea settable=false
+            AXLayoutArea description="Tracks time ruler" settable=false
+              AXButton value="0" settable=false
+              AXButton value="0" settable=false
+              AXLayoutArea description="chord track" value="0" settable=false
+              AXLayoutItem description="cycle region" value="0" settable=false
+                AXHandle description="Left Locator" value="0" settable=false
+                AXHandle description="Right Locator" value="0" settable=false
+              AXValueIndicator subrole="AXTimeline" description="Playhead thumb" value="164926744166400" settable=true
+              AXValueIndicator subrole="AXTimeline" description="Start Marker" value="0" settable=true
+              AXValueIndicator subrole="AXTimeline" description="End Marker" value="2111062325329920" settable=true
+            AXScrollBar value="0" settable=true
+        AXSplitGroup settable=false
+          AXScrollArea settable=false
+            AXGroup description="Tracks header" settable=false
+              AXLayoutItem description="Track 1 “vox”" settable=false
+                AXRadioButton description="Has Focus" value="0" settable=false
+                AXSplitter description="Individual Track Zoom" value="0" settable=true
+                AXCheckBox description="Mute" value="0" settable=false
+                AXCheckBox description="Solo" value="0" settable=false
+                AXCheckBox description="Record Enable" value="0" settable=false
+                AXCheckBox description="Input Monitoring" value="0" settable=false
+                AXCheckBox description="Enable Automation" value="1" settable=false
+                AXSlider value="64" settable=true
+                AXSlider description="Volume" value="173" settable=true
+                AXTextField description="vox" value="0" settable=false
+                AXButton value="0" settable=false
+                AXButton description="Automation Value" value="1509949440" settable=false
+                AXPopUpButton description="Automation Mode" value="Read" settable=false
+                AXPopUpButton description="Automation Parameter" value="Volume" settable=false
+              AXLayoutItem description="Track 2 “Rugrats”" settable=false
+                AXRadioButton description="Has Focus" value="1" settable=false
+                AXSplitter description="Individual Track Zoom" value="0" settable=true
+                AXCheckBox description="Mute" value="0" settable=false
+                AXCheckBox description="Solo" value="0" settable=false
+                AXCheckBox description="Record Enable" value="0" settable=false
+                AXCheckBox description="Input Monitoring" value="0" settable=false
+                AXCheckBox description="Enable Automation" value="1" settable=false
+                AXSlider value="64" settable=true
+                AXSlider description="Volume" value="173" settable=true
+                AXTextField description="Rugrats" value="0" settable=false
+                AXButton value="0" settable=false
+                AXButton description="Automation Value" value="1509949440" settable=false
+                AXPopUpButton description="Automation Mode" value="Read" settable=false
+                AXPopUpButton description="Automation Parameter" value="Volume" settable=false
+              AXLayoutItem description="Track 3 “Backup Vox”" settable=false
+                AXRadioButton description="Has Focus" value="0" settable=false
+                AXSplitter description="Individual Track Zoom" value="0" settable=true
+                AXCheckBox description="Mute" value="0" settable=false
+                AXCheckBox description="Solo" value="0" settable=false
+                AXCheckBox description="Record Enable" value="0" settable=false
+                AXCheckBox description="Input Monitoring" value="0" settable=false
+                AXCheckBox description="Enable Automation" value="1" settable=false
+                AXSlider value="64" settable=true
+                AXSlider description="Volume" value="173" settable=true
+                AXTextField description="Backup Vox" value="0" settable=false
+                AXButton value="0" settable=false
+                AXButton description="Automation Value" value="1509949440" settable=false
+                AXPopUpButton description="Automation Mode" value="Read" settable=false
+                AXPopUpButton description="Automation Parameter" value="Volume" settable=false
+              AXLayoutItem description="Track 4 “guitar”" settable=false
+                AXRadioButton description="Has Focus" value="0" settable=false
+                AXSplitter description="Individual Track Zoom" value="0" settable=true
+                AXCheckBox description="Mute" value="0" settable=false
+                AXCheckBox description="Solo" value="0" settable=false
+                AXCheckBox description="Record Enable" value="0" settable=false
+                AXCheckBox description="Input Monitoring" value="0" settable=false
+                AXCheckBox description="Enable Automation" value="1" settable=false
+                AXSlider value="64" settable=true
+                AXSlider description="Volume" value="173" settable=true
+                AXTextField description="guitar" value="0" settable=false
+                AXButton value="0" settable=false
+                AXButton description="Automation Value" value="1509949440" settable=false
+                AXPopUpButton description="Automation Mode" value="Read" settable=false
+                AXPopUpButton description="Automation Parameter" value="Volume" settable=false
+              AXLayoutItem description="Track 5 “bass”" settable=false
+                AXRadioButton description="Has Focus" value="0" settable=false
+                AXSplitter description="Individual Track Zoom" value="0" settable=true
+                AXCheckBox description="Mute" value="0" settable=false
+                AXCheckBox description="Solo" value="0" settable=false
+                AXCheckBox description="Record Enable" value="0" settable=false
+                AXCheckBox description="Input Monitoring" value="0" settable=false
+                AXCheckBox description="Enable Automation" value="1" settable=false
+                AXSlider value="64" settable=true
+                AXSlider description="Volume" value="173" settable=true
+                AXTextField description="bass" value="0" settable=false
+                AXButton value="0" settable=false
+                AXButton description="Automation Value" value="1509949440" settable=false
+                AXPopUpButton description="Automation Mode" value="Read" settable=false
+                AXPopUpButton description="Automation Parameter" value="Volume" settable=false
+              AXLayoutItem description="Track 6 “synth”" settable=false
+                AXRadioButton description="Has Focus" value="0" settable=false
+                AXSplitter description="Individual Track Zoom" value="0" settable=true
+                AXCheckBox description="Mute" value="0" settable=false
+                AXCheckBox description="Solo" value="0" settable=false
+                AXCheckBox description="Record Enable" value="0" settable=false
+                AXCheckBox description="Input Monitoring" value="0" settable=false
+                AXCheckBox description="Enable Automation" value="1" settable=false
+                AXSlider value="64" settable=true
+                AXSlider description="Volume" value="173" settable=true
+                AXTextField description="synth" value="0" settable=false
+                AXButton value="0" settable=false
+                AXButton description="Automation Value" value="1509949440" settable=false
+                AXPopUpButton description="Automation Mode" value="Read" settable=false
+                AXPopUpButton description="Automation Parameter" value="Volume" settable=false
+              AXLayoutItem description="Track 7 “lead guitar”" settable=false
+                AXRadioButton description="Has Focus" value="0" settable=false
+                AXSplitter description="Individual Track Zoom" value="0" settable=true
+                AXCheckBox description="Mute" value="0" settable=false
+                AXCheckBox description="Solo" value="0" settable=false
+                AXCheckBox description="Record Enable" value="0" settable=false
+                AXCheckBox description="Input Monitoring" value="0" settable=false
+                AXCheckBox description="Enable Automation" value="1" settable=false
+                AXSlider value="64" settable=true
+                AXSlider description="Volume" value="173" settable=true
+                AXTextField description="lead guitar" value="0" settable=false
+                AXButton value="0" settable=false
+                AXButton description="Automation Value" value="1509949440" settable=false
+                AXPopUpButton description="Automation Mode" value="Read" settable=false
+                AXPopUpButton description="Automation Parameter" value="Volume" settable=false
+              AXLayoutItem description="Track 8 “piano”" settable=false
+                AXRadioButton description="Has Focus" value="0" settable=false
+                AXSplitter description="Individual Track Zoom" value="0" settable=true
+                AXCheckBox description="Mute" value="0" settable=false
+                AXCheckBox description="Solo" value="0" settable=false
+                AXCheckBox description="Record Enable" value="0" settable=false
+                AXCheckBox description="Input Monitoring" value="0" settable=false
+                AXCheckBox description="Enable Automation" value="1" settable=false
+                AXSlider value="64" settable=true
+                AXSlider description="Volume" value="173" settable=true
+                AXTextField description="piano" value="0" settable=false
+                AXButton value="0" settable=false
+                AXButton description="Automation Value" value="1509949440" settable=false
+                AXPopUpButton description="Automation Mode" value="Read" settable=false
+                AXPopUpButton description="Automation Parameter" value="Volume" settable=false
+              AXLayoutItem description="Track 9 “Kick Drum”" settable=false
+                AXRadioButton description="Has Focus" value="0" settable=false
+                AXSplitter description="Individual Track Zoom" value="0" settable=true
+                AXCheckBox description="Mute" value="0" settable=false
+                AXCheckBox description="Solo" value="0" settable=false
+                AXCheckBox description="Record Enable" value="0" settable=false
+                AXCheckBox description="Input Monitoring" value="0" settable=false
+                AXCheckBox description="Enable Automation" value="1" settable=false
+                AXSlider value="64" settable=true
+                AXSlider description="Volume" value="173" settable=true
+                AXTextField description="Kick Drum" value="0" settable=false
+                AXButton value="0" settable=false
+                AXButton description="Automation Value" value="1509949440" settable=false
+                AXPopUpButton description="Automation Mode" value="Read" settable=false
+                AXPopUpButton description="Automation Parameter" value="Volume" settable=false
+              AXLayoutItem description="Track 10 “Snare Drum”" settable=false
+                AXRadioButton description="Has Focus" value="0" settable=false
+                AXSplitter description="Individual Track Zoom" value="0" settable=true
+                AXCheckBox description="Mute" value="0" settable=false
+                AXCheckBox description="Solo" value="0" settable=false
+                AXCheckBox description="Record Enable" value="0" settable=false
+                AXCheckBox description="Input Monitoring" value="0" settable=false
+                AXCheckBox description="Enable Automation" value="1" settable=false
+                AXSlider value="64" settable=true
+                AXSlider description="Volume" value="173" settable=true
+                AXTextField description="Snare Drum" value="0" settable=false
+                AXButton value="0" settable=false
+                AXButton description="Automation Value" value="1509949440" settable=false
+                AXPopUpButton description="Automation Mode" value="Read" settable=false
+                AXPopUpButton description="Automation Parameter" value="Volume" settable=false
+              AXLayoutItem description="Track 11 “High Hats”" settable=false
+                AXRadioButton description="Has Focus" value="0" settable=false
+                AXSplitter description="Individual Track Zoom" value="0" settable=true
+                AXCheckBox description="Mute" value="0" settable=false
+                AXCheckBox description="Solo" value="0" settable=false
+                AXCheckBox description="Record Enable" value="0" settable=false
+                AXCheckBox description="Input Monitoring" value="0" settable=false
+                AXCheckBox description="Enable Automation" value="1" settable=false
+                AXSlider value="64" settable=true
+                AXSlider description="Volume" value="173" settable=true
+                AXTextField description="High Hats" value="0" settable=false
+                AXButton value="0" settable=false
+                AXButton description="Automation Value" value="1509949440" settable=false
+                AXPopUpButton description="Automation Mode" value="Read" settable=false
+                AXPopUpButton description="Automation Parameter" value="Volume" settable=false
+              AXLayoutItem description="Track 12 “OverHeads”" settable=false
+                AXRadioButton description="Has Focus" value="0" settable=false
+                AXSplitter description="Individual Track Zoom" value="0" settable=true
+                AXCheckBox description="Mute" value="0" settable=false
+                AXCheckBox description="Solo" value="0" settable=false
+                AXCheckBox description="Record Enable" value="0" settable=false
+                AXCheckBox description="Input Monitoring" value="0" settable=false
+                AXCheckBox description="Enable Automation" value="1" settable=false
+                AXSlider value="64" settable=true
+                AXSlider description="Volume" value="173" settable=true
+                AXTextField description="OverHeads" value="0" settable=false
+                AXButton value="0" settable=false
+                AXButton description="Automation Value" value="1509949440" settable=false
+                AXPopUpButton description="Automation Mode" value="Read" settable=false
+                AXPopUpButton description="Automation Parameter" value="Volume" settable=false
+              AXLayoutItem description="Track 13 “Room”" settable=false
+                AXRadioButton description="Has Focus" value="0" settable=false
+                AXSplitter description="Individual Track Zoom" value="0" settable=true
+                AXCheckBox description="Mute" value="0" settable=false
+                AXCheckBox description="Solo" value="0" settable=false
+                AXCheckBox description="Record Enable" value="0" settable=false
+                AXCheckBox description="Input Monitoring" value="0" settable=false
+                AXCheckBox description="Enable Automation" value="1" settable=false
+                AXSlider value="64" settable=true
+                AXSlider description="Volume" value="173" settable=true
+                AXTextField description="Room" value="0" settable=false
+                AXButton value="0" settable=false
+                AXButton description="Automation Value" value="1509949440" settable=false
+                AXPopUpButton description="Automation Mode" value="Read" settable=false
+                AXPopUpButton description="Automation Parameter" value="Volume" settable=false
+              AXLayoutItem description="Track 14 “pedal steel1”" settable=false
+                AXRadioButton description="Has Focus" value="0" settable=false
+                AXSplitter description="Individual Track Zoom" value="0" settable=true
+                AXCheckBox description="Mute" value="0" settable=false
+                AXCheckBox description="Solo" value="0" settable=false
+                AXCheckBox description="Record Enable" value="0" settable=false
+                AXCheckBox description="Input Monitoring" value="0" settable=false
+                AXCheckBox description="Enable Automation" value="1" settable=false
+                AXSlider value="64" settable=true
+                AXSlider description="Volume" value="173" settable=true
+                AXTextField description="pedal steel1" value="0" settable=false
+                AXButton value="0" settable=false
+                AXButton description="Automation Value" value="1509949440" settable=false
+                AXPopUpButton description="Automation Mode" value="Read" settable=false
+                AXPopUpButton description="Automation Parameter" value="Volume" settable=false
+              AXLayoutItem description="Track 15 “pedla steel2”" settable=false
+                AXRadioButton description="Has Focus" value="0" settable=false
+                AXSplitter description="Individual Track Zoom" value="0" settable=true
+                AXCheckBox description="Mute" value="0" settable=false
+                AXCheckBox description="Solo" value="0" settable=false
+                AXCheckBox description="Record Enable" value="0" settable=false
+                AXCheckBox description="Input Monitoring" value="0" settable=false
+                AXCheckBox description="Enable Automation" value="1" settable=false
+                AXSlider value="64" settable=true
+                AXSlider description="Volume" value="173" settable=true
+                AXTextField description="pedla steel2" value="0" settable=false
+                AXButton value="0" settable=false
+                AXButton description="Automation Value" value="1509949440" settable=false
+                AXPopUpButton description="Automation Mode" value="Read" settable=false
+                AXPopUpButton description="Automation Parameter" value="Volume" settable=false
+              AXLayoutItem description="Track 16 “pedla steel3”" settable=false
+                AXRadioButton description="Has Focus" value="0" settable=false
+                AXSplitter description="Individual Track Zoom" value="0" settable=true
+                AXCheckBox description="Mute" value="0" settable=false
+                AXCheckBox description="Solo" value="0" settable=false
+                AXCheckBox description="Record Enable" value="0" settable=false
+                AXCheckBox description="Input Monitoring" value="0" settable=false
+                AXCheckBox description="Enable Automation" value="1" settable=false
+                AXSlider value="64" settable=true
+                AXSlider description="Volume" value="173" settable=true
+                AXTextField description="pedla steel3" value="0" settable=false
+                AXButton value="0" settable=false
+                AXButton description="Automation Value" value="1509949440" settable=false
+                AXPopUpButton description="Automation Mode" value="Read" settable=false
+                AXPopUpButton description="Automation Parameter" value="Volume" settable=false
+              AXLayoutItem description="Track 17 “pedla steel 4”" settable=false
+                AXRadioButton description="Has Focus" value="0" settable=false
+                AXSplitter description="Individual Track Zoom" value="0" settable=true
+                AXCheckBox description="Mute" value="0" settable=false
+                AXCheckBox description="Solo" value="0" settable=false
+                AXCheckBox description="Record Enable" value="0" settable=false
+                AXCheckBox description="Input Monitoring" value="0" settable=false
+                AXCheckBox description="Enable Automation" value="1" settable=false
+                AXSlider value="64" settable=true
+                AXSlider description="Volume" value="173" settable=true
+                AXTextField description="pedla steel 4" value="0" settable=false
+                AXButton value="0" settable=false
+                AXButton description="Automation Value" value="1509949440" settable=false
+                AXPopUpButton description="Automation Mode" value="Read" settable=false
+                AXPopUpButton description="Automation Parameter" value="Volume" settable=false
+              AXLayoutItem description="Track 18 “pedla steel 5”" settable=false
+                AXRadioButton description="Has Focus" value="0" settable=false
+                AXSplitter description="Individual Track Zoom" value="0" settable=true
+                AXCheckBox description="Mute" value="0" settable=false
+                AXCheckBox description="Solo" value="0" settable=false
+                AXCheckBox description="Record Enable" value="0" settable=false
+                AXCheckBox description="Input Monitoring" value="0" settable=false
+                AXCheckBox description="Enable Automation" value="1" settable=false
+                AXSlider value="94" settable=true
+                AXSlider description="Volume" value="173" settable=true
+                AXTextField description="pedla steel 5" value="0" settable=false
+                AXButton value="0" settable=false
+                AXButton description="Automation Value" value="1509949440" settable=false
+                AXPopUpButton description="Automation Mode" value="Read" settable=false
+                AXPopUpButton description="Automation Parameter" value="Volume" settable=false
+            AXScrollBar value="0" settable=true
+          AXScrollArea settable=false
+            AXGroup description="Tracks contents" settable=false
+              AXLayoutArea description="Track 1 “vox”" value="0" settable=false
+                AXLayoutItem description="vox" settable=false
+              AXButton value="0" settable=false
+              AXLayoutArea description="Track 3 “Backup Vox”" value="0" settable=false
+                AXLayoutItem description="Rugrats" settable=false
+              AXButton value="0" settable=false
+              AXLayoutArea description="Track 5 “bass”" value="0" settable=false
+              AXButton value="0" settable=false
+              AXLayoutArea description="Track 7 “lead guitar”" value="0" settable=false
+              AXButton value="0" settable=false
+              AXLayoutArea description="Track 9 “Kick Drum”" value="0" settable=false
+              AXButton value="0" settable=false
+              AXLayoutArea description="Track 11 “High Hats”" value="0" settable=false
+              AXButton value="0" settable=false
+              AXLayoutArea description="Track 13 “Room”" value="0" settable=false
+              AXButton value="0" settable=false
+              AXLayoutArea description="Track 15 “pedla steel2”" value="0" settable=false
+              AXButton value="0" settable=false
+              AXLayoutArea description="Track 17 “pedla steel 4”" value="0" settable=false
+              AXButton value="0" settable=false
+              AXLayoutArea value="0" settable=false
+              AXButton value="0" settable=false
+              AXLayoutArea value="0" settable=false
+              AXButton value="0" settable=false
+              AXLayoutArea value="0" settable=false
+              AXButton value="0" settable=false
+              AXLayoutArea value="0" settable=false
+              AXButton value="0" settable=false
+              AXLayoutArea value="0" settable=false
+              AXButton value="0" settable=false
+              AXLayoutArea value="0" settable=false
+              AXButton value="0" settable=false
+              AXLayoutArea value="0" settable=false
+              AXButton value="0" settable=false
+              AXLayoutArea value="0" settable=false
+              AXButton value="0" settable=false
+              AXLayoutArea value="0" settable=false
+              AXButton value="0" settable=false
+              AXLayoutArea value="0" settable=false
+            AXScrollBar value="0" settable=true
+              AXValueIndicator value="0" settable=true
+              AXButton subrole="AXIncrementArrow" settable=false
+              AXButton subrole="AXDecrementArrow" settable=false
+              AXButton subrole="AXIncrementPage" settable=false
+              AXButton subrole="AXDecrementPage" settable=false
+            AXScrollBar value="0.02195121951219514" settable=true
+              AXValueIndicator value="0.02195121951219514" settable=true
+              AXButton subrole="AXIncrementArrow" settable=false
+              AXButton subrole="AXDecrementArrow" settable=false
+              AXButton subrole="AXIncrementPage" settable=false
+              AXButton subrole="AXDecrementPage" settable=false
+  AXGroup description="Track" settable=false
+    AXStaticText value="Track" settable=false
+    AXGroup description="Track" settable=false
+      AXGroup settable=false
+        AXMenuButton subrole="AXSegment" description="Edit" settable=false
+        AXMenuButton subrole="AXSegment" description="Functions" settable=false
+        AXMenuButton subrole="AXSegment" description="View" settable=false
+      AXGroup settable=false
+        AXCheckBox subrole="AXSegment" description="Show/Hide Automation" value="0" settable=false
+        AXCheckBox subrole="AXSegment" description="Show/Hide Flex" value="0" settable=false
+      AXCheckBox description="Catch Playhead" value="0" settable=false
+      AXGroup settable=false
+        AXMenuButton subrole="AXSegment" description="Left Click Tool, Pointer Tool" settable=false
+        AXMenuButton subrole="AXSegment" description="Command-Click Tool, Marquee Tool" settable=false
+      AXStaticText value="Snap:" settable=false
+      AXPopUpButton value="Smart" settable=false
+      AXCheckBox description="Waveform Zoom" title="Waveform Zoom" value="0" settable=false
+      AXCheckBox description="Horizontal Auto Zoom" value="0" settable=false
+      AXSlider description="Horizontal Zoom" value="0.170753002166748" settable=true
+        AXValueIndicator value="0.170753002166748" settable=true
+    AXGroup description="Track" settable=false
+      AXSplitGroup settable=false
+        AXSplitGroup settable=false
+          AXGroup description="Track legend" settable=false
+            AXStaticText description="No regions selected" settable=false
+            AXStaticText description="on Track Rugrats" settable=false
+          AXScrollArea settable=false
+            AXGroup description="Track time ruler" settable=false
+              AXLayoutItem description="cycle region" value="0" settable=false
+                AXHandle description="Left Locator" value="0" settable=false
+                AXHandle description="Right Locator" value="0" settable=false
+              AXValueIndicator subrole="AXTimeline" description="Playhead thumb" value="164926744166400" settable=true
+              AXValueIndicator subrole="AXTimeline" description="Start Marker" value="0" settable=true
+              AXValueIndicator subrole="AXTimeline" description="End Marker" value="2111062325329920" settable=true
+              AXButton description="play" value="0" settable=false
+        AXSplitGroup settable=false
+          AXGroup settable=false
+          AXScrollArea settable=false
+            AXGroup description="Track contents" settable=false
+              AXLayoutItem description="Rugrats" settable=false
+                AXTextField description="Rugrats" settable=false
+                AXHandle description="move left border" settable=false
+                AXHandle description="move right border" settable=false
+                AXHandle description="loop" settable=false
+            AXScrollBar value="0" settable=true
+              AXValueIndicator value="0" settable=true
+              AXButton subrole="AXIncrementArrow" settable=false
+              AXButton subrole="AXDecrementArrow" settable=false
+              AXButton subrole="AXIncrementPage" settable=false
+              AXButton subrole="AXDecrementPage" settable=false
+  AXRadioGroup settable=false
+    AXRadioButton subrole="AXSegment" description="Event" value="1" settable=false
+    AXRadioButton subrole="AXSegment" description="Marker" value="0" settable=false
+    AXRadioButton subrole="AXSegment" description="Tempo" value="0" settable=false
+    AXRadioButton subrole="AXSegment" description="Signature" value="0" settable=false
+  AXGroup settable=false
+    AXGroup description="Event" settable=false
+      AXButton description="Leave Folder" settable=false
+      AXGroup settable=false
+        AXMenuButton subrole="AXSegment" description="Edit" settable=false
+        AXMenuButton subrole="AXSegment" description="Functions" settable=false
+        AXMenuButton subrole="AXSegment" description="View" settable=false
+      AXCheckBox description="Catch Playhead" value="0" settable=false
+      AXGroup settable=false
+        AXCheckBox subrole="AXSegment" description="MIDI In   ⌥I" value="0" settable=false
+        AXCheckBox subrole="AXSegment" description="MIDI Out" value="1" settable=false
+      AXCheckBox title="Notes" value="1" settable=false
+      AXCheckBox title="Progr. Change" value="1" settable=false
+      AXCheckBox title="Pitch Bend" value="1" settable=false
+      AXCheckBox title="Controller" value="1" settable=false
+      AXCheckBox title="Aftertouch" value="1" settable=false
+      AXCheckBox title="Poly Aftertouch" value="1" settable=false
+      AXCheckBox title="Syst. Exclusive" value="1" settable=false
+      AXCheckBox title="Additional Info" value="0" settable=false
+      AXButton description="Create new Event" settable=false
+      AXPopUpButton value="Fader MIDI" settable=false
+      AXButton description="Quantize Selected Events" title="Q" settable=false
+      AXStaticText value="Quantize:" settable=false
+      AXPopUpButton value="Off" settable=false
+      AXStaticText description="Region Path" settable=false
+      AXStaticText description="Number of Items" value="2 Events" settable=false
+      AXGroup description="Event" settable=false
+        AXScrollArea settable=false
+          AXTable settable=false
+            AXRow subrole="AXTableRow" settable=false
+              AXCell settable=false
+              AXCell settable=false
+              AXCell settable=false
+                AXGroup description="1 1 1 1 " settable=false
+              AXCell settable=false
+                AXTextField value="vox" settable=true
+              AXCell settable=false
+                AXCell description="1" settable=false
+              AXCell settable=false
+                AXGroup description="4 0 0 0" settable=false
+            AXRow subrole="AXTableRow" settable=false
+              AXCell settable=false
+              AXCell settable=false
+              AXCell settable=false
+                AXGroup description="1 1 1 1 " settable=false
+              AXCell settable=false
+                AXTextField value="Rugrats" settable=true
+              AXCell settable=false
+                AXCell description="2" settable=false
+              AXCell settable=false
+                AXGroup description="49 2 3 0" settable=false
+            AXColumn settable=false
+            AXColumn settable=false
+            AXColumn settable=false
+            AXColumn settable=false
+            AXColumn settable=false
+            AXColumn settable=false
+            AXGroup settable=false
+              AXButton subrole="AXSortButton" title="L" settable=false
+              AXButton subrole="AXSortButton" title="M" settable=false
+              AXButton subrole="AXSortButton" title="Position" settable=false
+              AXButton subrole="AXSortButton" title="Name" settable=false
+              AXButton subrole="AXSortButton" title="Trk" settable=false
+              AXButton subrole="AXSortButton" title="Length" settable=false
+          AXScrollBar value="0" settable=true
