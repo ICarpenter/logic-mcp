@@ -457,6 +457,52 @@ public actor AXBridge {
             try? await Task.sleep(for: .milliseconds(50))
         }
     }
+
+    // MARK: - Arrange "Control Room" engine (Phase 5 Plan A)
+
+    /// Logic's arrange window: the AXWindow whose title ends "- Tracks". The mixer window ends
+    /// "Mixer: Tracks", so the suffix excludes it (and its Inspector mini-mixer). See ax-findings.md.
+    public func arrangeWindow() -> AXHandle? {
+        p.windows().first { (p.string(.title, of: $0) ?? "").hasSuffix("- Tracks") }
+    }
+
+    /// The inner `AXGroup description="Control Bar"` in the arrange window — its children include the
+    /// Tempo slider, the Playhead bar/beat sliders, and the Time/Key Signature popups.
+    public func controlBar() -> AXHandle? {
+        guard let w = arrangeWindow() else { return nil }
+        return descendant(of: w, role: "AXGroup", description: "Control Bar")
+    }
+
+    /// A named control-bar child by (role, description). nil if the arrange window or control is absent.
+    public func controlBarControl(role: String, description: String) -> AXHandle? {
+        guard let cb = controlBar() else { return nil }
+        return descendant(of: cb, role: role, description: description)
+    }
+
+    /// Per-track arrange-header items under `AXGroup description="Tracks header"`, each described
+    /// `Track N “name”`. Returns (parsed name, item handle) in tree order.
+    public func arrangeHeaderItems() -> [(name: String, item: AXHandle)] {
+        guard let w = arrangeWindow(),
+              let header = descendant(of: w, role: "AXGroup", description: "Tracks header") else { return [] }
+        return p.children(of: header).compactMap { item in
+            guard p.string(.role, of: item) == "AXLayoutItem",
+                  let desc = p.string(.description, of: item),
+                  let name = Self.parseTrackHeaderName(desc) else { return nil }
+            return (name, item)
+        }
+    }
+
+    /// The `Has Focus` radio inside a header item (value "1" == focused track).
+    public func hasFocusRadio(in item: AXHandle) -> AXHandle? {
+        descendant(of: item, role: "AXRadioButton", description: "Has Focus")
+    }
+
+    /// `Track 2 “Rugrats”` → `Rugrats`; nil if `desc` is not a track-header wrapper.
+    nonisolated static func parseTrackHeaderName(_ desc: String) -> String? {
+        guard let open = desc.firstIndex(of: "“"), let close = desc.lastIndex(of: "”"), open < close
+        else { return nil }
+        return String(desc[desc.index(after: open)..<close])
+    }
 }
 
 private extension Array {
